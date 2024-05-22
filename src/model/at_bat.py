@@ -63,8 +63,9 @@ class AtBatState:
 class AtBat:
     """Represents a full at-bat event"""
 
-    def __init__(self, game: Game, pitcher: Pitcher, batter: Batter, outcome_state: AtBatState):
+    def __init__(self, game: Game, pitcher: Pitcher, batter: Batter, outcome_state: AtBatState, ab_id: int | None = None):
         self.game = game
         self.pitcher = pitcher
         self.batter = batter
         self.state = outcome_state
+        self.id = ab_id

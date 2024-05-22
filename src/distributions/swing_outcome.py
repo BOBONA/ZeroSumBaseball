@@ -2,117 +2,22 @@ import os
 
 import torch
 from torch import nn, Tensor
-from torch.utils.data import random_split, DataLoader
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData
 from src.data.datasets import PitchSwingDataset, SwingResult
-from src.model.pitch import PitchType, Pitch
+from src.model.pitch import PitchType
 from src.model.zones import ZONES_DIMENSION
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-class SwingOutcomeLateFusion(nn.Module):
-    """
-    This network uses a "late fusion" architecture, merging the pitcher, batter, and pitch embeddings
-    after a series of convolutional layers, along with the strike/ball count.
-
-    It outputs the distribution of swing outcomes (strike, foul, hit, out).
-    """
-
-    def __init__(self):
-        super(SwingOutcomeLateFusion, self).__init__()
-
-        # Stateless modules
-        self.padding = nn.ZeroPad2d((2, 1, 2, 1))  # To replicate padding='same' for the max pool layers
-        self.pool = nn.MaxPool2d(2)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-        self.softmax = nn.Softmax()
-
-        # Pitcher layers
-        self.p_conv_1 = nn.Conv2d(2 * len(PitchType), 32, 4, padding='same')
-        self.p_conv_2 = nn.Conv2d(32, 32, 3, padding='same')
-        self.p_conv_3 = nn.Conv2d(32, 32, 2, padding='same')
-        self.p_conv_4 = nn.Conv2d(32, 64, (2, 5), padding='same')
-        self.p_conv_5 = nn.Conv2d(64, 64, (2, 4), padding='same')
-        self.p_conv_6 = nn.Conv2d(64, 64, (2, 3), padding='same')
-        self.p_conv_7 = nn.Conv2d(64, 64, (2, 2), padding='same')
-
-        # Batter layers
-        self.b_conv_1 = nn.Conv2d(2 * len(PitchType), 32, 4, padding='same')
-        self.b_conv_2 = nn.Conv2d(32, 32, 3, padding='same')
-        self.b_conv_3 = nn.Conv2d(32, 32, 2, padding='same')
-        self.b_conv_4 = nn.Conv2d(32, 64, (2, 3), padding='same')
-        self.b_conv_5 = nn.Conv2d(64, 64, 3, padding='same')
-        self.b_conv_6 = nn.Conv2d(64, 64, (2, 3), padding='same')
-        self.b_conv_7 = nn.Conv2d(64, 64, 2, padding='same')
-
-        # Pitch layers
-        self.pp_conv_1 = nn.Conv2d(len(PitchType), 32, 3, padding='same')
-
-        # After flattening and merging pitcher, batter, pitch, and strike/ball count
-        output_size = 642
-        self.linear_1 = nn.Linear(output_size, 128)
-        self.linear_2 = nn.Linear(128, 64)
-        self.linear_3 = nn.Linear(64, 32)
-        self.output = nn.Linear(32, len(SwingResult))
-
-    def infer(self, pitch: Pitch) -> dict[SwingResult, float]:
-        output = self.forward(pitch.at_bat.pitcher.data, pitch.at_bat.batter.data,
-                              pitch.get_one_hot_encoding(),
-                              torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
-                              torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32))
-
-        return {SwingResult(i): output[i].item() for i in range(len(SwingResult))}
-
-    def forward(self, pitcher: Tensor, batter: Tensor, pitch: Tensor, strikes: Tensor, balls: Tensor) -> Tensor:
-        pitcher = self.relu(self.p_conv_1(pitcher))
-        pitcher = self.relu(self.p_conv_2(pitcher))
-        pitcher = self.relu(self.p_conv_3(pitcher))
-        pitcher = self.padding(self.pool(pitcher))
-        pitcher = self.relu(self.p_conv_4(pitcher))
-        pitcher = self.padding(self.pool(pitcher))
-        pitcher = self.relu(self.p_conv_5(pitcher))
-        pitcher = self.padding(self.pool(pitcher))
-        pitcher = self.relu(self.p_conv_6(pitcher))
-        pitcher = self.padding(self.pool(pitcher))
-        pitcher = self.relu(self.p_conv_7(pitcher))
-        pitcher = self.pool(pitcher)
-        pitcher = pitcher.flatten(1)
-
-        batter = self.relu(self.b_conv_1(batter))
-        batter = self.relu(self.b_conv_2(batter))
-        batter = self.relu(self.b_conv_3(batter))
-        batter = self.padding(self.pool(batter))
-        batter = self.relu(self.b_conv_4(batter))
-        batter = self.padding(self.pool(batter))
-        batter = self.relu(self.b_conv_5(batter))
-        batter = self.padding(self.pool(batter))
-        batter = self.relu(self.b_conv_6(batter))
-        batter = self.padding(self.pool(batter))
-        batter = self.relu(self.b_conv_7(batter))
-        batter = self.pool(batter)
-        batter = batter.flatten(1)
-
-        pitch = self.relu(self.pp_conv_1(pitch))
-        pitch = self.pool(pitch)
-        pitch = pitch.flatten(1)
-
-        strikes = strikes.unsqueeze(1)
-        balls = balls.unsqueeze(1)
-
-        output = torch.cat((pitcher, batter, pitch, strikes, balls), dim=1)
-        output = self.sigmoid(self.linear_1(output))
-        output = self.sigmoid(self.linear_2(output))
-        output = self.sigmoid(self.linear_3(output))
-        output = self.output(output)
-        output = self.softmax(output)
-        return output
-
-
 class SwingOutcome(nn.Module):
+    """
+    This network learns the distribution of a swing based on the pitcher, batter, pitch, and current count.
+    """
+
     def __init__(self):
         super(SwingOutcome, self).__init__()
         self.relu = nn.ReLU()
@@ -165,10 +70,7 @@ class SwingOutcome(nn.Module):
 def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
           path: str | None = '../../model_weights/swing_outcome.pth'):
     data = BaseballData.load_with_cache()
-    pitch_dataset = PitchSwingDataset(data)
-    training_split = 0.8
-    training_set, testing_set = random_split(pitch_dataset, [int(training_split * len(pitch_dataset)),
-                                                             len(pitch_dataset) - int(training_split * len(pitch_dataset))])
+    training_set, testing_set = PitchSwingDataset.get_random_split(data, 0.2, seed=0)
 
     training_dataloader = DataLoader(training_set, batch_size=batch_size, shuffle=True)
     testing_dataloader = DataLoader(testing_set, batch_size=batch_size, shuffle=True)
@@ -186,13 +88,15 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.3)
     criterion = nn.CrossEntropyLoss()
 
+    loader_length = len(training_dataloader)
+
     for epoch in range(epochs):
         print(f'Running epoch {epoch + 1}\n')
 
         train_total = 0
         train_correct = 0
         model.train()
-        for i, ((pitcher, batter, pitch, strikes, balls), result) in enumerate(training_dataloader):
+        for i, ((pitcher, batter, pitch, strikes, balls), result) in tqdm(enumerate(training_dataloader), leave=True, total=loader_length):
             pitcher, batter, pitch, strikes, balls = (pitcher.to(device), batter.to(device), pitch.to(device),
                                                       strikes.to(device), balls.to(device))
             result: Tensor = result.to(device)
@@ -233,5 +137,46 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
         scheduler.step()
 
 
+def analyze_distribution(model_path: str = '../../model_weights/swing_outcome.pth'):
+    data = BaseballData.load_with_cache()
+    training_set, testing_set = PitchSwingDataset.get_random_split(data, 0.2, seed=0)
+
+    # Note that the dataset puts strikes before balls
+    pitches_30 = [pitch for pitch in training_set if pitch[0][3].item() == 0 and pitch[0][4].item() == 3]
+    pitches_02 = [pitch for pitch in training_set if pitch[0][3].item() == 2 and pitch[0][4].item() == 0]
+
+    actual_dist_30 = 100 * sum([pitch[1] for pitch in pitches_30]) / len(pitches_30)
+    actual_dist_02 = 100 * sum([pitch[1] for pitch in pitches_02]) / len(pitches_02)
+
+    model = SwingOutcome().to(device)
+    model.load_state_dict(torch.load(model_path))
+    model.eval()
+
+    predicted_dist_30 = torch.zeros(1, len(SwingResult)).to(device)
+    predicted_dist_02 = torch.zeros(1, len(SwingResult)).to(device)
+
+    with torch.no_grad():
+        for pitch in tqdm(pitches_30):
+            pitcher, batter, pitch, strikes, balls = (pitch[0][0].unsqueeze(0).to(device), pitch[0][1].unsqueeze(0).to(device),
+                                                      pitch[0][2].unsqueeze(0).to(device), pitch[0][3].unsqueeze(0).to(device),
+                                                      pitch[0][4].unsqueeze(0).to(device))
+            output = model(pitcher, batter, pitch, strikes, balls)
+            predicted_dist_30 += output
+        predicted_dist_30 /= len(pitches_30)
+
+        for pitch in tqdm(pitches_02):
+            pitcher, batter, pitch, strikes, balls = (pitch[0][0].unsqueeze(0).to(device), pitch[0][1].unsqueeze(0).to(device),
+                                                      pitch[0][2].unsqueeze(0).to(device), pitch[0][3].unsqueeze(0).to(device),
+                                                      pitch[0][4].unsqueeze(0).to(device))
+            output = model(pitcher, batter, pitch, strikes, balls)
+            predicted_dist_02 += output
+        predicted_dist_02 /= len(pitches_02)
+
+    print('Actual distribution for 3-0 count:', actual_dist_30)
+    print('Predicted distribution for 3-0 count:', predicted_dist_30[0] * 100)
+    print('Actual distribution for 0-2 count:', actual_dist_02)
+    print('Predicted distribution for 0-2 count:', predicted_dist_02[0] * 100)
+
+
 if __name__ == '__main__':
-    train()
+    analyze_distribution()

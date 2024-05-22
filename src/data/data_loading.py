@@ -136,7 +136,8 @@ class BaseballData:
                 outcome = AtBatOutcome.BASE if event in on_base_events else AtBatOutcome.OUT
 
                 self.at_bats[at_bat_id] = AtBat(self.games.get(game_id, None), self.pitchers[pitcher_id],
-                                                self.batters[batter_id], outcome_state=AtBatState(outcome))
+                                                self.batters[batter_id], outcome_state=AtBatState(outcome),
+                                                ab_id=at_bat_id)
 
         # Load individual pitch data
         with open(raw_data_dir + self.PITCHES) as f:

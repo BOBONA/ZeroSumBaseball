@@ -1,4 +1,6 @@
+import random
 from enum import IntEnum
+from typing import Self
 
 import torch
 from torch import Tensor
@@ -41,8 +43,12 @@ class PitchSwingDataset(Dataset):
     strike/ball count for each pitch that the batter swung to.
     """
 
-    def __init__(self, data_source: BaseballData):
-        self.pitches = [pitch for pitch in data_source.pitches if pitch.result.batter_swung()]
+    def __init__(self, data_source: BaseballData, ab_ids: list[int] | None = None):
+        ab_ids_set = set(ab_ids)
+        self.pitches = [pitch for pitch in data_source.pitches
+                        if pitch.result.batter_swung()
+                        and pitch.is_valid()
+                        and (ab_ids is None or pitch.at_bat.id in ab_ids_set)]
 
     def __len__(self):
         return len(self.pitches)
@@ -50,7 +56,21 @@ class PitchSwingDataset(Dataset):
     def __getitem__(self, idx) -> tuple[tuple[Tensor, Tensor, Tensor, Tensor, Tensor], Tensor]:
         pitch = self.pitches[idx]
         return ((pitch.at_bat.pitcher.data, pitch.at_bat.batter.data,
-                pitch.get_one_hot_encoding(),
-                torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
-                torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32)),
+                 pitch.get_one_hot_encoding(),
+                 torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
+                 torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32)),
                 SwingResult.from_pitch_result(pitch.result).get_one_hot_encoding())
+
+    @classmethod
+    def get_random_split(cls, data_source: BaseballData, val_split: float = 0.2, seed: int | None = None) -> tuple[Self, Self]:
+        """Splits the data into training and validation sets, keeping the at-bats together."""
+
+        ab_ids = list(data_source.at_bats.keys())
+        random.seed(seed)
+        random.shuffle(ab_ids)
+
+        split_idx = int(len(ab_ids) * (1 - val_split))
+        train_ab_ids = ab_ids[:split_idx]
+        val_ab_ids = ab_ids[split_idx:]
+
+        return cls(data_source, train_ab_ids), cls(data_source, val_ab_ids)
