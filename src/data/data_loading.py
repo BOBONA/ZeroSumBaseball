@@ -163,7 +163,7 @@ class BaseballData:
                 pitch_result = pitch_result_mapping.get(pitch_result_code, None)
 
                 pitch = Pitch(AtBatState(AtBatOutcome.NONE, int(float(balls)), int(float(strikes))),
-                              at_bat, zone, pitch_type, pitch_result)
+                              at_bat, zone, pitch_type, start_speed, pitch_result)
 
                 # Update the pitch entry
                 if at_bat is not None and pitch.is_valid():
@@ -207,3 +207,7 @@ class BaseballData:
             for batter, stats in batter_statistics.items():
                 batter.set_swinging_frequency_data(nan_to_num(stats['total_swung']))
                 batter.set_batting_average_data(nan_to_num(stats['total_hits'] / stats['total_encountered']))
+
+
+if __name__ == '__main__':
+    data = BaseballData.load_with_cache()

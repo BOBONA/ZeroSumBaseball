@@ -49,6 +49,8 @@ class Pitcher:
 
     Attributes:
         data (torch.Tensor): The tensor representing the pitcher's relative throwing frequency and average velocity.
+        estimated_control (torch.Tensor): A bivariate normal distribution representing the pitcher's control. Note that
+            BaseballData learns this from the data and it is used to train the PitcherControl network.
     """
 
     def __init__(self, data: torch.Tensor = None):
@@ -63,6 +65,8 @@ class Pitcher:
         else:
             self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
             self.data[:len(PitchType), :, :] = 1 / len(PitchType)
+
+        self.estimated_control = torch.zeros(5)
 
     def set_throwing_frequency_data(self, data: torch.Tensor):
         """

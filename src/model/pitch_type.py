@@ -1,5 +1,7 @@
 from enum import IntEnum
 
+import torch
+
 
 class PitchType(IntEnum):
     """
@@ -13,3 +15,10 @@ class PitchType(IntEnum):
     CHANGEUP = 3
     CURVE = 4
     CUTTER = 5
+
+    def get_one_hot_encoding(self):
+        """Returns a one-hot encoding of the pitch type."""
+
+        one_hot = torch.zeros(len(PitchType))
+        one_hot[self] = 1
+        return one_hot

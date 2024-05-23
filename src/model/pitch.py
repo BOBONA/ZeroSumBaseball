@@ -11,12 +11,13 @@ class Pitch:
     """
 
     def __init__(self, at_bat_state: AtBatState, at_bat: AtBat, location: Zone | None,
-                 pitch_type: PitchType | None, pitch_result: PitchResult | None):
+                 pitch_type: PitchType | None, speed: float, pitch_result: PitchResult | None):
         """
         :param at_bat_state: The current state of the at-bat BEFORE the pitch is thrown
         :param at_bat: The full at-bat event that the pitch is part of
         :param location: The location of the pitch
         :param pitch_type: The type of the pitch
+        :param speed: The speed of the pitch
         :param pitch_result: The result of the pitch
         """
 
@@ -24,6 +25,7 @@ class Pitch:
         self.at_bat = at_bat
         self.location = location
         self.type = pitch_type
+        self.speed = speed
         self.result = pitch_result
 
     def is_valid(self):
