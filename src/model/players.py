@@ -1,4 +1,7 @@
+from collections import defaultdict
+
 import torch
+from torch.distributions import MultivariateNormal
 
 from src.model.pitch_type import PitchType
 from src.model.zones import ZONES_DIMENSION
@@ -11,9 +14,12 @@ class Batter:
 
     Attributes:
         data (torch.Tensor): The tensor representing the batter's relative swinging frequency and batting average.
+        obp (float): The batter's on-base percentage.
+        obp_percentile (float): The batter's percentile in on-base percentage.
     """
 
-    def __init__(self, data: torch.Tensor = None):
+    def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
+                 data: torch.Tensor = None):
         if data:
             assert (data.size(0) == 2 * len(PitchType) and
                     data.size(1) == ZONES_DIMENSION and
@@ -23,6 +29,9 @@ class Batter:
         else:
             self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
             self.data[:len(PitchType), :, :] = 1 / len(PitchType)
+
+        self.obp = obp
+        self.obp_percentile = obp_percentile
 
     def set_swinging_frequency_data(self, data: torch.Tensor):
         """
@@ -49,11 +58,15 @@ class Pitcher:
 
     Attributes:
         data (torch.Tensor): The tensor representing the pitcher's relative throwing frequency and average velocity.
-        estimated_control (torch.Tensor): A bivariate normal distribution representing the pitcher's control. Note that
-            BaseballData learns this from the data and it is used to train the PitcherControl network.
+        obp (float): The pitcher's on-base percentage (against).
+        obp_percentile (float): The pitcher's percentile in on-base percentage (where lower obp is higher percentile).
+        estimated_control (defaultdict[PitchType, MultivariateNormal | None]): A bivariate normal distribution
+            representing the pitcher's control. Note that BaseballData learns this from empirical data, and it is used
+            to train the PitcherControl network.
     """
 
-    def __init__(self, data: torch.Tensor = None):
+    def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
+                 data: torch.Tensor = None):
         if data:
             assert (data.size(0) == 2 * len(PitchType) and
                     data.size(1) == ZONES_DIMENSION and
@@ -66,7 +79,9 @@ class Pitcher:
             self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
             self.data[:len(PitchType), :, :] = 1 / len(PitchType)
 
-        self.estimated_control = torch.zeros(5)
+        self.obp = obp
+        self.obp_percentile = obp_percentile
+        self.estimated_control: dict[PitchType, MultivariateNormal | None] = {}
 
     def set_throwing_frequency_data(self, data: torch.Tensor):
         """

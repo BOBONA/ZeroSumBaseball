@@ -77,11 +77,9 @@ class SwingOutcome(nn.Module):
         return output
 
 
-data = BaseballData.load_with_cache()
-
-
-def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, gamma: float = 2,
+def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, gamma: float = 2.75,
           path: str = '../../model_weights/swing_outcome.pth'):
+    data = BaseballData.load_with_cache()
     training_set, testing_set = PitchSwingDataset.get_random_split(data, 0.2, seed=80)
 
     training_dataloader = DataLoader(training_set, batch_size=batch_size, shuffle=True)
@@ -100,21 +98,20 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.3)
 
-    # I am very much struggling to understand why the network won't learn the distribution
-    # with CrossEntropyLoss. Focal loss seems to work, and doing some hyperparameter tuning
-    # on the gamma yielded 3.7 as the best value. I am a bit worried the problem is elsewhere,
-    # and that I am just patching it up with an over-fitted loss function.
+    # I am struggling to understand why the network won't learn the distribution
+    # with CrossEntropyLoss. It predicts HITS at 0%. Focal loss seems to work, and
+    # some testing yielded 2.75 as the best value. However, I am concerned that this
+    # is merely patching up some other problem
+    # criterion = nn.CrossEntropyLoss()
     criterion = lambda x, y: sigmoid_focal_loss(x, y, reduction='mean', gamma=gamma)
 
     loader_length = len(training_dataloader)
 
     for epoch in range(epochs):
-        print(f'Running epoch {epoch + 1}\n')
-
         model.train()
         training_loss = 0
         for i, ((pitcher, batter, pitch, strikes, balls), target) in tqdm(enumerate(training_dataloader), leave=True,
-                                                                          total=loader_length):
+                                                                          total=loader_length, desc=f'Epoch {epoch + 1}'):
             pitcher, batter, pitch, strikes, balls = (pitcher.to(device), batter.to(device), pitch.to(device),
                                                       strikes.to(device), balls.to(device))
             target: Tensor = target.to(device)
@@ -143,10 +140,11 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
 
             print(f'Epoch {epoch + 1}, '
                   f'training loss: {1000 * training_loss / len(training_set)}, '
-                  f'average loss: {1000 * total_loss / len(testing_set)}')
+                  f'testing loss: {1000 * total_loss / len(testing_set)}')
 
         scheduler.step()
 
 
 if __name__ == '__main__':
-    train(epochs=10, learning_rate=0.0005, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')
+    # Testing could probably find a slightly better gamma value between 2.6 and 3.0
+    train(epochs=10, learning_rate=0.0001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')

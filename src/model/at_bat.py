@@ -28,9 +28,7 @@ class AtBatOutcome(IntEnum):
 
 
 class AtBatState:
-    """
-    Represents the changing state of an at-bat.
-    """
+    """Represents the changing state of an at-bat."""
 
     def __init__(self, outcome=AtBatOutcome.NONE, balls=0, strikes=0):
         self.outcome = outcome

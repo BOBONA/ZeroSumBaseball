@@ -7,9 +7,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData
-from src.data.datasets import PitchDataset
+from src.data.datasets import PitchDataset, PitchControlDataset
+from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
-
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -22,15 +22,15 @@ class PitcherControl(nn.Module):
     def __init__(self):
         super(PitcherControl, self).__init__()
 
-        self.dropout = nn.Dropout(0.2)
-        self.conv_1 = nn.Conv2d(len(PitchType), 32, 3)
-        self.conv_2 = nn.Conv2d(32, 64, 3)
+        self.dropout = nn.Dropout(0.3)
+        self.conv_1 = nn.Conv2d(2 * len(PitchType), 64, 3)
+        self.conv_2 = nn.Conv2d(64, 128, 3)
 
-        self.linear_1 = nn.Linear(64, 64)
-        self.linear_2 = nn.Linear(64, 64)
+        self.linear_1 = nn.Linear(128, 128)
 
         # Concatenate the pitcher and pitch embeddings
-        self.linear_3 = nn.Linear(70, 32)
+        self.linear_2 = nn.Linear(134, 72)
+        self.linear_3 = nn.Linear(72, 32)
 
         self.mu_x = nn.Linear(32, 1)
         self.mu_y = nn.Linear(32, 1)
@@ -44,8 +44,10 @@ class PitcherControl(nn.Module):
         pitcher = F.relu(self.conv_2(pitcher))
         pitcher = pitcher.flatten(1)
         pitcher = F.relu(self.linear_1(pitcher))
+
         pitcher = torch.cat((pitcher, pitch), dim=1)
         pitcher = F.relu(self.linear_2(pitcher))
+        pitcher = F.relu(self.linear_3(pitcher))
 
         mu_x = self.mu_x(pitcher)
         mu_y = self.mu_y(pitcher)
@@ -56,18 +58,15 @@ class PitcherControl(nn.Module):
         return torch.cat((mu_x, mu_y, var_x, var_y, covar_xy), dim=1)
 
 
-def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
+def get_pitch_control_sets(data: BaseballData) -> (PitchDataset, PitchDataset):
+    return PitchControlDataset.get_random_split(data, 0.3, seed=1)
+
+
+def train(epochs: int = 10, batch_size: int = 8, learning_rate: float = 0.001,
           path: str = '../../model_weights/pitcher_control.pth'):
     data = BaseballData.load_with_cache()
 
-    # Filter the dataset to only include pitches where the pitcher has a 3-0 count
-    training_dataset, validation_dataset = PitchDataset.get_split_on_attribute(
-        data,
-        val_split=0.2,
-        attribute=lambda pitch: pitch.pitcher,
-        filter_on=lambda pitch: pitch.at_bat_state.balls == 3 and pitch.at_bat_state.strikes == 0,
-        map_to=lambda pitch: ((pitch.pitcher.data, pitch.type.get_one_hot_encoding()), pitch.pitcher.estimated_control)
-    )
+    training_dataset, validation_dataset = get_pitch_control_sets(data)
 
     training_dataloader = DataLoader(training_dataset, batch_size=batch_size, shuffle=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=batch_size)
@@ -79,18 +78,18 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
     if os.path.isfile(path):
         model.load_state_dict(torch.load(path))
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.3)
-    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.3)
+    criterion = nn.MSELoss()
 
     loader_length = len(training_dataloader)
 
     for epoch in range(epochs):
-        print(f'Running epoch {epoch + 1}\n')
-
         model.train()
         training_loss = 0
-        for i, ((pitcher, pitch_type), distribution) in tqdm(enumerate(training_dataloader), leave=True, total=loader_length):
+        for i, (obp, (pitcher, pitch_type), distribution) in tqdm(enumerate(training_dataloader), leave=True,
+                                                                  total=loader_length,
+                                                                  desc=f'Epoch {epoch + 1}'):
             pitcher, pitch_type, distribution = pitcher.to(device), pitch_type.to(device), distribution.to(device)
 
             optimizer.zero_grad()
@@ -107,18 +106,18 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
         model.eval()
         with torch.no_grad():
             total_loss = 0
-            for i, ((pitcher, pitch_type), distribution) in enumerate(validation_dataloader):
+            for i, (obp, (pitcher, pitch_type), distribution) in enumerate(validation_dataloader):
                 pitcher, pitch_type, distribution = pitcher.to(device), pitch_type.to(device), distribution.to(device)
 
                 output = model.forward(pitcher, pitch_type)
                 total_loss += criterion(output, distribution)
 
             print(f'Epoch {epoch + 1}, '
-                  f'training loss: {1000 * training_loss / len(training_dataset)}, '
-                  f'average loss: {1000 * total_loss / len(validation_dataset)}')
+                  f'training loss: {training_loss / len(training_dataloader)}, '
+                  f'testing loss: {total_loss / len(validation_dataloader)}')
 
         scheduler.step()
 
 
 if __name__ == '__main__':
-    train()
+    train(batch_size=5, epochs=40, learning_rate=0.001)
