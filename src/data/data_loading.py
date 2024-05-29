@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Self
 
 import torch
+import winsound
 from torch import nan_to_num, Tensor
 from torch.distributions import MultivariateNormal
 from tqdm import tqdm
@@ -82,7 +83,7 @@ class BaseballData:
     def load_with_cache(cls, processed_data: str = '../../processed_data/baseball_data.pth', raw_data_dir: str = '../../raw_data/') -> Self:
         """Cache the processed data if it doesn't exist, or load it"""
 
-        print('Loading baseball data... ', end='')
+        print('Loading baseball data from cache... ', end='')
 
         if os.path.isfile(processed_data):
             data = torch.load(processed_data)
@@ -98,6 +99,8 @@ class BaseballData:
         Load raw baseball data from the specified directory.
         :param raw_data_dir: The directory containing the raw baseball data.
         """
+
+        print('Generating baseball data (this will only happen once)...')
 
         self.player_names: dict[int, str] = {}
         self.games: dict[int, Game] = {}
@@ -247,6 +250,8 @@ class BaseballData:
             for batter, stats in batter_statistics.items():
                 batter.set_swinging_frequency_data(nan_to_num(stats['total_swung']))
                 batter.set_batting_average_data(nan_to_num(stats['total_hits'] / stats['total_encountered']))
+
+        print('Done')
 
 
 if __name__ == '__main__':

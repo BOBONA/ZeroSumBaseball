@@ -49,7 +49,7 @@ class PitchDataset(Dataset):
 
     def __init__(self, data_source: BaseballData, valid_only: bool = True,
                  filter_on: Callable[[Pitch], bool] | None = None,
-                 map_to: Callable[[Pitch], any] | None = None,
+                 map_to: Callable[[int, Pitch], any] | None = None,
                  pitches: list[Pitch] | None = None):
         """
         :param data_source: The data source for the dataset
@@ -60,7 +60,7 @@ class PitchDataset(Dataset):
 
         pitch_objects = pitches if pitches is not None else data_source.pitches
         self.pitches = [pitch for pitch in pitch_objects if (not valid_only or pitch.is_valid()) and (filter_on is None or filter_on(pitch))]
-        self.data = [map_to(pitch) if map_to is not None else pitch for pitch in self.pitches]
+        self.data = [map_to(idx, pitch) if map_to is not None else pitch for idx, pitch in enumerate(self.pitches)]
 
     def __len__(self):
         return len(self.data)
@@ -73,7 +73,7 @@ class PitchDataset(Dataset):
                                attribute: Callable[[Pitch], any] | None = None,
                                valid_only: bool = True,
                                filter_on: Callable[[Pitch], bool] | None = None,
-                               map_to: Callable[[Pitch], any] | None = None,
+                               map_to: Callable[[int, Pitch], any] | None = None,
                                seed: int | None = None) -> tuple[Self, Self]:
         """
         Splits the data into training and validation sets, with an option to split on a custom attribute.
@@ -136,49 +136,3 @@ class PitchControlDataset(Dataset):
 
         return (cls(data_source, train_pitchers),
                 cls(data_source, validation_pitchers))
-
-
-class PitchSwingDataset(Dataset):
-    """
-    Note, this class should be replaced with PitchDataset with a filter_on condition
-
-    Simple wrapper around the Pitch class, returning the pitcher, batter, pitch, and
-    strike/ball count for each pitch that the batter swung to.
-    """
-
-    def __init__(self, data_source: BaseballData, condition: Callable[[Pitch], bool] | None = None,
-                 pitches: list[Pitch] | None = None):
-        if pitches is not None:
-            self.pitches = pitches
-        else:
-            self.pitches = [pitch for pitch in data_source.pitches
-                            if pitch.is_valid()
-                            and pitch.result.batter_swung()
-                            and (condition is None or condition(pitch))]
-
-    def __len__(self):
-        return len(self.pitches)
-
-    def __getitem__(self, idx) -> tuple[tuple[Tensor, Tensor, Tensor, Tensor, Tensor], Tensor]:
-        pitch = self.pitches[idx]
-
-        return ((pitch.at_bat.pitcher.data, pitch.at_bat.batter.data,
-                 pitch.get_one_hot_encoding(),
-                 torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
-                 torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32)),
-                SwingResult.from_pitch_result(pitch.result).get_one_hot_encoding())
-
-    @classmethod
-    def get_random_split(cls, data_source: BaseballData, val_split: float = 0.2, seed: int | None = None) -> tuple[Self, Self]:
-        """Splits the data into training and validation sets, keeping the at-bats together."""
-
-        ab_ids = list(data_source.at_bats.keys())
-        random.seed(seed)
-        random.shuffle(ab_ids)
-
-        split_idx = int(len(ab_ids) * (1 - val_split))
-        train_ab_ids = set(ab_ids[:split_idx])
-        val_ab_ids = set(ab_ids[split_idx:])
-
-        return (cls(data_source, lambda pitch: pitch.at_bat.id in train_ab_ids),
-                cls(data_source, lambda pitch: pitch.at_bat.id in val_ab_ids))

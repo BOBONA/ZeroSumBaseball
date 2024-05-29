@@ -28,7 +28,7 @@ class Batter:
             self.data = data
         else:
             self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
-            self.data[:len(PitchType), :, :] = 1 / len(PitchType)
+            # self.data[:len(PitchType), :, :] = 1 / len(PitchType)
 
         self.obp = obp
         self.obp_percentile = obp_percentile
@@ -42,7 +42,8 @@ class Batter:
         """
 
         # Normalize the swinging frequencies
-        self.data[len(PitchType):, :, :] = data / data.sum()
+        if data.sum() > 0:
+            self.data[len(PitchType):, :, :] = data / data.sum()
 
     def set_batting_average_data(self, data: torch.Tensor):
         """Sets the batting average data for the batter."""
@@ -77,7 +78,7 @@ class Pitcher:
             self.data = data
         else:
             self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
-            self.data[:len(PitchType), :, :] = 1 / len(PitchType)
+            # self.data[:len(PitchType), :, :] = 1 / len(PitchType)
 
         self.obp = obp
         self.obp_percentile = obp_percentile
@@ -92,7 +93,8 @@ class Pitcher:
         """
 
         # Normalize the throwing frequencies
-        self.data[:len(PitchType), :, :] = data / data[:len(PitchType), :, :].sum()
+        if data.sum() > 0:
+            self.data[:len(PitchType), :, :] = data / data.sum()
 
     def set_average_velocity_data(self, data: torch.Tensor):
         """Sets the average velocity data for the pitcher."""

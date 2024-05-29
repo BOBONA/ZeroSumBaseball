@@ -8,8 +8,8 @@ from torchvision.ops import sigmoid_focal_loss
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData
-from src.data.datasets import PitchSwingDataset, SwingResult
-from src.model.pitch import PitchType
+from src.data.datasets import SwingResult, PitchDataset
+from src.model.pitch import PitchType, Pitch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -77,10 +77,28 @@ class SwingOutcome(nn.Module):
         return output
 
 
+def map_swing_outcome(idx: int, pitch: Pitch):
+    return (idx, (pitch.at_bat.pitcher.data, pitch.at_bat.batter.data,
+                  pitch.get_one_hot_encoding(),
+                  torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
+                  torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32)),
+            SwingResult.from_pitch_result(pitch.result).get_one_hot_encoding())
+
+
+def get_swing_outcome_dataset(data: BaseballData) -> [PitchDataset, PitchDataset]:
+    return PitchDataset.get_split_on_attribute(
+        data, 0.2,
+        attribute=lambda p: p.at_bat.pitcher,  # Group by pitcher
+        filter_on=lambda p: p.result.batter_swung(),
+        map_to=map_swing_outcome,
+        seed=80
+    )
+
+
 def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, gamma: float = 2.75,
           path: str = '../../model_weights/swing_outcome.pth'):
     data = BaseballData.load_with_cache()
-    training_set, testing_set = PitchSwingDataset.get_random_split(data, 0.2, seed=80)
+    training_set, testing_set = get_swing_outcome_dataset(data)
 
     training_dataloader = DataLoader(training_set, batch_size=batch_size, shuffle=True)
     testing_dataloader = DataLoader(testing_set, batch_size=batch_size)
@@ -110,8 +128,10 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
     for epoch in range(epochs):
         model.train()
         training_loss = 0
-        for i, ((pitcher, batter, pitch, strikes, balls), target) in tqdm(enumerate(training_dataloader), leave=True,
-                                                                          total=loader_length, desc=f'Epoch {epoch + 1}'):
+        for i, (pitch_idx, (pitcher, batter, pitch, strikes, balls), target) in tqdm(enumerate(training_dataloader),
+                                                                                     leave=True,
+                                                                                     total=loader_length,
+                                                                                     desc=f'Epoch {epoch + 1}'):
             pitcher, batter, pitch, strikes, balls = (pitcher.to(device), batter.to(device), pitch.to(device),
                                                       strikes.to(device), balls.to(device))
             target: Tensor = target.to(device)
@@ -130,7 +150,7 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
         model.eval()
         with torch.no_grad():
             total_loss = 0
-            for i, ((pitcher, batter, pitch, strikes, balls), result) in enumerate(testing_dataloader):
+            for i, (pitch_idx, (pitcher, batter, pitch, strikes, balls), result) in enumerate(testing_dataloader):
                 pitcher, batter, pitch, strikes, balls = (pitcher.to(device), batter.to(device), pitch.to(device),
                                                           strikes.to(device), balls.to(device))
                 result: Tensor = result.to(device)
