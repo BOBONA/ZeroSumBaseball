@@ -147,4 +147,5 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
 
 if __name__ == '__main__':
     # Testing could probably find a slightly better gamma value between 2.6 and 3.0
+    # However, this kind of testing really requires another split of the data
     train(epochs=10, learning_rate=0.0001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')

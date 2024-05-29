@@ -58,7 +58,7 @@ class PitcherControl(nn.Module):
         return torch.cat((mu_x, mu_y, var_x, var_y, covar_xy), dim=1)
 
 
-def get_pitch_control_sets(data: BaseballData) -> (PitchDataset, PitchDataset):
+def get_pitch_control_sets(data: BaseballData) -> (PitchControlDataset, PitchControlDataset):
     return PitchControlDataset.get_random_split(data, 0.3, seed=1)
 
 

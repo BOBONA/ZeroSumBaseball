@@ -140,7 +140,7 @@ class PitchControlDataset(Dataset):
 
 class PitchSwingDataset(Dataset):
     """
-    Can be replaced with PitchDataset with a filter_on condition
+    Note, this class should be replaced with PitchDataset with a filter_on condition
 
     Simple wrapper around the Pitch class, returning the pitcher, batter, pitch, and
     strike/ball count for each pitch that the batter swung to.
