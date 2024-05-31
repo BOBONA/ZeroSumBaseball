@@ -57,6 +57,11 @@ class AtBatState:
 
         return self
 
+    def value(self) -> int:
+        """Returns the "utility" of the current state."""
+
+        return int(self.outcome == AtBatOutcome.BASE)
+
 
 class AtBat:
     """Represents a full at-bat event"""

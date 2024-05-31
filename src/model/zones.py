@@ -10,6 +10,11 @@ class Zone:
         self.is_strike = is_strike
         self.is_borderline = is_borderline
 
+    def center(self) -> tuple[float, float]:
+        """Returns the center of the zone."""
+
+        return (self.left + self.right) / 2, (self.bottom + self.top) / 2
+
     def __str__(self):
         return f"Zone {self.coords}"
 
@@ -33,6 +38,7 @@ batter patience.
 """
 
 ZONES = []
+NON_BORDERLINE_ZONES = []  # For an easy list of zones
 
 STRIKE_ZONE_BOTTOM = 18.29
 STRIKE_ZONE_WIDTH = 19.94
@@ -70,18 +76,20 @@ x_divisions = [STRIKE_ZONE_LEFT, STRIKE_ZONE_LEFT + STRIKE_ZONE_X_STEP, STRIKE_Z
 y_divisions = [STRIKE_ZONE_BOTTOM, STRIKE_ZONE_BOTTOM + STRIKE_ZONE_Y_STEP, STRIKE_ZONE_TOP - STRIKE_ZONE_Y_STEP, STRIKE_ZONE_TOP]
 for i in range(len(x_divisions) - 1):
     for j in range(len(y_divisions) - 1):
-        ZONES.append(Zone([(i + 1, j + 1)], x_divisions[i], x_divisions[i + 1], y_divisions[j], y_divisions[j + 1], is_strike=True))
+        NON_BORDERLINE_ZONES.append(Zone([(i + 1, j + 1)], x_divisions[i], x_divisions[i + 1], y_divisions[j], y_divisions[j + 1], is_strike=True))
 
 # Regular ball zones
-ZONES.append(Zone([(0, 0)], -Inf, STRIKE_ZONE_LEFT, -Inf, STRIKE_ZONE_BOTTOM, False))
-ZONES.append(Zone([(0, 4)], -Inf, STRIKE_ZONE_LEFT, STRIKE_ZONE_TOP, Inf, False))
-ZONES.append(Zone([(4, 0)], STRIKE_ZONE_RIGHT, Inf, -Inf, STRIKE_ZONE_BOTTOM, False))
-ZONES.append(Zone([(4, 4)], STRIKE_ZONE_RIGHT, Inf, STRIKE_ZONE_TOP, Inf, False))
+NON_BORDERLINE_ZONES.append(Zone([(0, 0)], -Inf, STRIKE_ZONE_LEFT, -Inf, STRIKE_ZONE_BOTTOM, False))
+NON_BORDERLINE_ZONES.append(Zone([(0, 4)], -Inf, STRIKE_ZONE_LEFT, STRIKE_ZONE_TOP, Inf, False))
+NON_BORDERLINE_ZONES.append(Zone([(4, 0)], STRIKE_ZONE_RIGHT, Inf, -Inf, STRIKE_ZONE_BOTTOM, False))
+NON_BORDERLINE_ZONES.append(Zone([(4, 4)], STRIKE_ZONE_RIGHT, Inf, STRIKE_ZONE_TOP, Inf, False))
 
-ZONES.append(Zone([(0, 1), (0, 2), (0, 3)], -Inf, STRIKE_ZONE_LEFT, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False))
-ZONES.append(Zone([(4, 1), (4, 2), (4, 3)], STRIKE_ZONE_RIGHT, Inf, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False))
-ZONES.append(Zone([(1, 0), (2, 0), (3, 0)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, -Inf, STRIKE_ZONE_BOTTOM, False))
-ZONES.append(Zone([(1, 4), (2, 4), (3, 4)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_TOP, Inf, False))
+NON_BORDERLINE_ZONES.append(Zone([(0, 1), (0, 2), (0, 3)], -Inf, STRIKE_ZONE_LEFT, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False))
+NON_BORDERLINE_ZONES.append(Zone([(4, 1), (4, 2), (4, 3)], STRIKE_ZONE_RIGHT, Inf, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False))
+NON_BORDERLINE_ZONES.append(Zone([(1, 0), (2, 0), (3, 0)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, -Inf, STRIKE_ZONE_BOTTOM, False))
+NON_BORDERLINE_ZONES.append(Zone([(1, 4), (2, 4), (3, 4)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_TOP, Inf, False))
+
+ZONES.extend(NON_BORDERLINE_ZONES)
 
 
 def get_zone(x_loc: float | None, y_loc: float | None) -> Zone | None:

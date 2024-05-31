@@ -36,7 +36,11 @@ class Pitch:
     def get_one_hot_encoding(self):
         """Returns a one-hot encoding of the pitch."""
 
+        return Pitch.get_encoding(self.type, self.location)
+
+    @classmethod
+    def get_encoding(cls, pitch_type: PitchType, location: Zone):
         one_hot = torch.zeros(len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
-        for x, y in self.location.coords:
-            one_hot[self.type.value, x, y] = 1
+        for x, y in location.coords:
+            one_hot[pitch_type.value, x, y] = 1
         return one_hot
