@@ -7,8 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData
-from src.data.datasets import PitchDataset, PitchControlDataset
-from src.model.pitch import Pitch
+from src.data.datasets import PitchControlDataset
 from src.model.pitch_type import PitchType
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

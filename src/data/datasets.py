@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 from src.data.data_loading import BaseballData
 from src.model.at_bat import PitchResult
 from src.model.pitch import Pitch
+from src.model.pitch_type import PitchType
 from src.model.players import Pitcher
 
 
@@ -25,6 +26,16 @@ class SwingResult(IntEnum):
         one_hot = torch.zeros(len(SwingResult))
         one_hot[self] = 1
         return one_hot
+
+    def to_pitch_result(self) -> PitchResult:
+        if self == self.STRIKE:
+            return PitchResult.SWINGING_STRIKE
+        elif self == self.FOUL:
+            return PitchResult.SWINGING_FOUL
+        elif self == self.HIT:
+            return PitchResult.HIT
+        elif self == self.OUT:
+            return PitchResult.OUT
 
     @classmethod
     def from_pitch_result(cls, pitch_result: PitchResult):
@@ -47,7 +58,7 @@ class PitchDataset(Dataset):
     do not need to be created for each use case.
     """
 
-    def __init__(self, data_source: BaseballData, valid_only: bool = True,
+    def __init__(self, data_source: BaseballData | None, valid_only: bool = True,
                  filter_on: Callable[[Pitch], bool] | None = None,
                  map_to: Callable[[int, Pitch], any] | None = None,
                  pitches: list[Pitch] | None = None):
@@ -69,7 +80,7 @@ class PitchDataset(Dataset):
         return self.data[idx]
 
     @classmethod
-    def get_split_on_attribute(cls, data_source: BaseballData, val_split: float = 0.2,
+    def get_split_on_attribute(cls, data_source: BaseballData | None, val_split: float = 0.2,
                                attribute: Callable[[Pitch], any] | None = None,
                                valid_only: bool = True,
                                filter_on: Callable[[Pitch], bool] | None = None,
@@ -104,17 +115,22 @@ class PitchControlDataset(Dataset):
     A dataset for training a model to predict the control of a pitch based on the pitcher and pitch type.
     Each sample contains a pitcher embedding, a one-hot encoding of the pitch type, and the variables
     of a fitted bivariate normal distribution.
+
+    The empty_data flag is used for testing purposes
     """
 
-    def __init__(self, data_source: BaseballData, pitchers: set[Pitcher] | None = None):
+    def __init__(self, data_source: BaseballData | None, pitchers: list[Pitcher] | None = None, empty_data: bool = False):
         self.data = []
-        for pitcher in data_source.pitchers.values():
-            if pitchers is None or pitcher in pitchers:
+        for i, pitcher in enumerate(data_source.pitchers.values() if data_source is not None else pitchers):
+            if not empty_data:
                 for pitch_type, distribution in pitcher.estimated_control.items():
                     self.data.append((pitcher.obp_percentile, (pitcher.data, pitch_type.get_one_hot_encoding()),
                                       torch.tensor([distribution.mean[0], distribution.mean[1],
                                                     distribution.covariance_matrix[0, 0], distribution.covariance_matrix[1, 1],
                                                     distribution.covariance_matrix[0, 1]])))
+            else:
+                for pitch_type in PitchType:
+                    self.data.append((i, pitch_type, (pitcher.data, pitch_type.get_one_hot_encoding()), torch.zeros(5)))
 
     def __len__(self):
         return len(self.data)
@@ -131,8 +147,8 @@ class PitchControlDataset(Dataset):
         random.shuffle(pitchers)
 
         split_idx = int(len(pitchers) * (1 - val_split))
-        train_pitchers = set(pitchers[:split_idx])
-        validation_pitchers = set(pitchers[split_idx:])
+        train_pitchers = pitchers[:split_idx]
+        validation_pitchers = pitchers[split_idx:]
 
         return (cls(data_source, train_pitchers),
                 cls(data_source, validation_pitchers))

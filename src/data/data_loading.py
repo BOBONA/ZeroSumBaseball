@@ -157,9 +157,11 @@ class BaseballData:
             for idx, (player_id, obp) in enumerate(batter_obp_list):
                 self.batters[player_id].obp = obp
                 self.batters[player_id].obp_percentile = idx / len(batter_obp_list)
+                self.batters[player_id].num_at_bats = batter_obp[player_id][0]
             for idx, (player_id, obp) in enumerate(pitcher_obp_list):
                 self.pitchers[player_id].obp = obp
                 self.pitchers[player_id].obp_percentile = idx / len(pitcher_obp_list)
+                self.pitchers[player_id].num_batters_faced = pitcher_obp[player_id][0]
 
         # Load individual pitch data
         with (open(raw_data_dir + self.PITCHES) as f):

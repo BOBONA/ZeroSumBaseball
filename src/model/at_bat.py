@@ -36,37 +36,48 @@ class AtBatState:
         self.strikes = strikes
 
     def transition_from_pitch_result(self, result: PitchResult) -> Self:
-        if self.outcome != AtBatOutcome.NONE:
-            return self
+        next_state = AtBatState(self.outcome, self.balls, self.strikes)
+
+        if next_state.outcome != AtBatOutcome.NONE:
+            return next_state
 
         if result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE:
-            self.strikes += 1
-        elif result == PitchResult.SWINGING_FOUL and self.strikes < 2:
-            self.strikes += 1
+            next_state.strikes += 1
+        elif result == PitchResult.SWINGING_FOUL and next_state.strikes < 2:
+            next_state.strikes += 1
         elif result == PitchResult.CALLED_BALL:
-            self.balls += 1
+            next_state.balls += 1
         elif result == PitchResult.HIT:
-            self.outcome = AtBatOutcome.BASE
+            next_state.outcome = AtBatOutcome.BASE
         elif result == PitchResult.OUT:
-            self.outcome = AtBatOutcome.OUT
+            next_state.outcome = AtBatOutcome.OUT
 
-        if self.balls == 4:
-            self.outcome = AtBatOutcome.BASE
-        if self.strikes == 3:
-            self.outcome = AtBatOutcome.OUT
+        if next_state.balls == 4:
+            next_state.outcome = AtBatOutcome.BASE
+        if next_state.strikes == 3:
+            next_state.outcome = AtBatOutcome.OUT
 
-        return self
+        return next_state
 
     def value(self) -> int:
         """Returns the "utility" of the current state."""
 
         return int(self.outcome == AtBatOutcome.BASE)
 
+    def __repr__(self):
+        return f"AtBatState({self.outcome.name}, {self.balls}, {self.strikes})"
+
+    def __hash__(self):
+        return hash((self.outcome, self.balls, self.strikes))
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
 
 class AtBat:
     """Represents a full at-bat event"""
 
-    def __init__(self, game: Game, pitcher: Pitcher, batter: Batter, outcome_state: AtBatState, ab_id: int | None = None):
+    def __init__(self, game: Game | None, pitcher: Pitcher | None, batter: Batter, outcome_state: AtBatState, ab_id: int | None = None):
         self.game = game
         self.pitcher = pitcher
         self.batter = batter

@@ -1,3 +1,6 @@
+import torch
+
+
 class Zone:
     """A Zone is represented with physical coordinates and "virtual" coordinates."""
 
@@ -15,8 +18,14 @@ class Zone:
 
         return (self.left + self.right) / 2, (self.bottom + self.top) / 2
 
-    def __str__(self):
-        return f"Zone {self.coords}"
+    def __repr__(self):
+        return f"Zone({self.coords})"
+
+    def __hash__(self):
+        return hash((*self.coords, self.is_strike, self.is_borderline))
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
 
 
 """
@@ -37,8 +46,10 @@ Borderline zones are also included. These are just outside the strike zone and a
 batter patience.
 """
 
+# Note that the borderline zones technically overlap with the ball zones
 ZONES = []
-NON_BORDERLINE_ZONES = []  # For an easy list of zones
+BORDERLINE_ZONES = []
+NON_BORDERLINE_ZONES = []
 
 STRIKE_ZONE_BOTTOM = 18.29
 STRIKE_ZONE_WIDTH = 19.94
@@ -61,15 +72,15 @@ borderline_fraction = 0.4
 borderline_x = STRIKE_ZONE_X_STEP * borderline_fraction
 borderline_y = STRIKE_ZONE_Y_STEP * borderline_fraction
 
-ZONES.append(Zone([(0, 0)], STRIKE_ZONE_LEFT - borderline_x, STRIKE_ZONE_LEFT, STRIKE_ZONE_BOTTOM - borderline_y, STRIKE_ZONE_BOTTOM, False, True))
-ZONES.append(Zone([(0, 4)], STRIKE_ZONE_LEFT - borderline_x, STRIKE_ZONE_LEFT, STRIKE_ZONE_TOP, STRIKE_ZONE_TOP + borderline_y, False, True))
-ZONES.append(Zone([(4, 0)], STRIKE_ZONE_RIGHT, STRIKE_ZONE_RIGHT + borderline_x, STRIKE_ZONE_BOTTOM - borderline_y, STRIKE_ZONE_BOTTOM, False, True))
-ZONES.append(Zone([(4, 4)], STRIKE_ZONE_RIGHT, STRIKE_ZONE_RIGHT + borderline_x, STRIKE_ZONE_TOP, STRIKE_ZONE_TOP + borderline_y, False, True))
+BORDERLINE_ZONES.append(Zone([(0, 0)], STRIKE_ZONE_LEFT - borderline_x, STRIKE_ZONE_LEFT, STRIKE_ZONE_BOTTOM - borderline_y, STRIKE_ZONE_BOTTOM, False, True))
+BORDERLINE_ZONES.append(Zone([(0, 4)], STRIKE_ZONE_LEFT - borderline_x, STRIKE_ZONE_LEFT, STRIKE_ZONE_TOP, STRIKE_ZONE_TOP + borderline_y, False, True))
+BORDERLINE_ZONES.append(Zone([(4, 0)], STRIKE_ZONE_RIGHT, STRIKE_ZONE_RIGHT + borderline_x, STRIKE_ZONE_BOTTOM - borderline_y, STRIKE_ZONE_BOTTOM, False, True))
+BORDERLINE_ZONES.append(Zone([(4, 4)], STRIKE_ZONE_RIGHT, STRIKE_ZONE_RIGHT + borderline_x, STRIKE_ZONE_TOP, STRIKE_ZONE_TOP + borderline_y, False, True))
 
-ZONES.append(Zone([(0, 1), (0, 2), (0, 3)], STRIKE_ZONE_LEFT - borderline_x, STRIKE_ZONE_LEFT, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False, True))
-ZONES.append(Zone([(4, 1), (4, 2), (4, 3)], STRIKE_ZONE_RIGHT, STRIKE_ZONE_RIGHT + borderline_x, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False, True))
-ZONES.append(Zone([(1, 0), (2, 0), (3, 0)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_BOTTOM - borderline_y, STRIKE_ZONE_BOTTOM, False, True))
-ZONES.append(Zone([(1, 4), (2, 4), (3, 4)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_TOP, STRIKE_ZONE_TOP + borderline_y, False, True))
+BORDERLINE_ZONES.append(Zone([(0, 1), (0, 2), (0, 3)], STRIKE_ZONE_LEFT - borderline_x, STRIKE_ZONE_LEFT, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False, True))
+BORDERLINE_ZONES.append(Zone([(4, 1), (4, 2), (4, 3)], STRIKE_ZONE_RIGHT, STRIKE_ZONE_RIGHT + borderline_x, STRIKE_ZONE_BOTTOM, STRIKE_ZONE_TOP, False, True))
+BORDERLINE_ZONES.append(Zone([(1, 0), (2, 0), (3, 0)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_BOTTOM - borderline_y, STRIKE_ZONE_BOTTOM, False, True))
+BORDERLINE_ZONES.append(Zone([(1, 4), (2, 4), (3, 4)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_TOP, STRIKE_ZONE_TOP + borderline_y, False, True))
 
 # Strike zones
 x_divisions = [STRIKE_ZONE_LEFT, STRIKE_ZONE_LEFT + STRIKE_ZONE_X_STEP, STRIKE_ZONE_RIGHT - STRIKE_ZONE_X_STEP, STRIKE_ZONE_RIGHT]
@@ -89,6 +100,7 @@ NON_BORDERLINE_ZONES.append(Zone([(4, 1), (4, 2), (4, 3)], STRIKE_ZONE_RIGHT, In
 NON_BORDERLINE_ZONES.append(Zone([(1, 0), (2, 0), (3, 0)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, -Inf, STRIKE_ZONE_BOTTOM, False))
 NON_BORDERLINE_ZONES.append(Zone([(1, 4), (2, 4), (3, 4)], STRIKE_ZONE_LEFT, STRIKE_ZONE_RIGHT, STRIKE_ZONE_TOP, Inf, False))
 
+ZONES.extend(BORDERLINE_ZONES)
 ZONES.extend(NON_BORDERLINE_ZONES)
 
 
@@ -101,3 +113,16 @@ def get_zone(x_loc: float | None, y_loc: float | None) -> Zone | None:
     for zone in ZONES:
         if zone.left <= x_loc <= zone.right and zone.bottom <= y_loc <= zone.top:
             return zone
+
+
+def get_zone_batched(x_locs: torch.Tensor, y_locs: torch.Tensor) -> list[Zone | None]:
+    result_zones: list = [None] * len(x_locs)
+    for zone in ZONES:
+        mask = (zone.left <= x_locs) & (x_locs <= zone.right) & (zone.bottom <= y_locs) & (y_locs <= zone.top)
+        indices = torch.nonzero(mask, as_tuple=False).squeeze()
+        if indices.dim() > 0:
+            for idx in indices:
+                result_zones[idx.item()] = zone
+
+    return result_zones
+

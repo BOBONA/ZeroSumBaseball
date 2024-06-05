@@ -16,6 +16,7 @@ class Batter:
         data (torch.Tensor): The tensor representing the batter's relative swinging frequency and batting average.
         obp (float): The batter's on-base percentage.
         obp_percentile (float): The batter's percentile in on-base percentage.
+        num_at_bats (int): The number of at-bats the batter has had.
     """
 
     def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
@@ -32,6 +33,7 @@ class Batter:
 
         self.obp = obp
         self.obp_percentile = obp_percentile
+        self.num_at_bats = 0
 
     def set_swinging_frequency_data(self, data: torch.Tensor):
         """
@@ -64,6 +66,7 @@ class Pitcher:
         estimated_control (defaultdict[PitchType, MultivariateNormal | None]): A bivariate normal distribution
             representing the pitcher's control. Note that BaseballData learns this from empirical data, and it is used
             to train the PitcherControl network.
+        num_batters_faced (int): The number of batters faced by the pitcher.
     """
 
     def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
@@ -83,6 +86,7 @@ class Pitcher:
         self.obp = obp
         self.obp_percentile = obp_percentile
         self.estimated_control: dict[PitchType, MultivariateNormal | None] = {}
+        self.num_batters_faced = 0
 
     def set_throwing_frequency_data(self, data: torch.Tensor):
         """
