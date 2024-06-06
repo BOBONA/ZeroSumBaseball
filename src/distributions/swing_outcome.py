@@ -167,8 +167,8 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
                 total_loss += criterion(output, result)
 
             print(f'Epoch {epoch + 1}, '
-                  f'training loss: {1000 * training_loss / len(training_set)}, '
-                  f'testing loss: {1000 * total_loss / len(testing_set)}')
+                  f'training loss: {training_loss / len(training_dataloader)}, '
+                  f'testing loss: {total_loss / len(testing_dataloader)}')
 
         scheduler.step()
 
@@ -176,4 +176,4 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
 if __name__ == '__main__':
     # Testing could probably find a slightly better gamma value between 2.6 and 3.0
     # However, this kind of testing really requires another split of the data
-    train(epochs=10, learning_rate=0.0001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')
+    train(epochs=50, learning_rate=0.001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')
