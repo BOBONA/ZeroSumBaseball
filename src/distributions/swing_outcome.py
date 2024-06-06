@@ -16,7 +16,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class SwingOutcome(nn.Module):
     """
-    This network learns the distribution of a swing based on the pitcher, batter, pitch, and current count.
+    This network learns the distribution of a swing based on the pitcher, batter, pitch, and relevant state.
     """
 
     def __init__(self):
