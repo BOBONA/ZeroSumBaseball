@@ -55,6 +55,8 @@ class AtBatState:
 
         self.outcome_event = outcome_event  # The outcome pitch result
 
+        self.precomputed_hash = None
+
     def transition_from_pitch_result(self, result: PitchResult) -> Self:
         next_state = AtBatState(self.balls, self.strikes, self.num_runs, self.num_outs, self.first, self.second, self.third)
 
@@ -83,6 +85,9 @@ class AtBatState:
             next_state.num_outs += 1
             next_state.balls = next_state.strikes = 0
 
+        if next_state.num_runs > 5:
+            next_state.num_runs = 5
+
         return next_state
 
     def move_batter(self, num_bases: int):
@@ -98,6 +103,7 @@ class AtBatState:
         elif num_bases == 2:
             self.num_runs += int(self.second) + int(self.third)
             self.third = self.first
+            self.first = False
             self.second = True
         elif num_bases == 1:
             self.num_runs += int(self.third)
@@ -120,7 +126,9 @@ class AtBatState:
                 f"{'x' if self.first else '-'}{'x' if self.second else '-'}{'x' if self.third else '-'})")
 
     def __hash__(self):
-        return hash((self.balls, self.strikes, self.num_runs, self.num_outs, self.first, self.second, self.third))
+        if self.precomputed_hash is None:
+            self.precomputed_hash = hash((self.balls, self.strikes, self.num_runs, self.num_outs, self.first, self.second, self.third))
+        return self.precomputed_hash
 
     def __eq__(self, other):
         return hash(self) == hash(other)

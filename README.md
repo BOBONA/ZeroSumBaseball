@@ -31,3 +31,6 @@ the batter's intentions, which seems difficult.
 - The pitch types simplify on the data given, where perhaps more of the numeric information could be of use. 
 
 - In predicting swing results, we do not differentiate between the batter directly getting out and outs on the field.
+
+- Due to the method of the value iteration algorithm, we limit the number of runs per inning
+to 5.

@@ -115,18 +115,20 @@ def get_zone(x_loc: float | None, y_loc: float | None) -> Zone | None:
             return zone
 
 
-def get_zone_batched(x_locs: torch.Tensor, y_locs: torch.Tensor) -> list[Zone | None]:
+def get_zones_batched(x_locs: torch.Tensor, y_locs: torch.Tensor) -> list[int]:
     """
     This batched version of get_zone is significantly faster and necessary for the random
-    sampling method used for measuring intended vs actual pitch locations.
+    sampling method used for measuring intended vs actual pitch locations. It returns indices of ZONES.
     """
 
-    result_zones: list = [None] * len(x_locs)
-    for zone in ZONES:
+    result_zones: list = [-1] * len(x_locs)
+    for zone_i, zone in enumerate(ZONES):
         mask = (zone.left <= x_locs) & (x_locs <= zone.right) & (zone.bottom <= y_locs) & (y_locs <= zone.top)
         indices = torch.nonzero(mask, as_tuple=False).squeeze()
-        if indices.dim() > 0:
+        if indices.numel() == 1:
+            result_zones[indices.item()] = zone_i
+        elif indices.numel() > 1:
             for idx in indices:
-                result_zones[idx.item()] = zone
+                result_zones[idx.item()] = zone_i
 
     return result_zones
