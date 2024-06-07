@@ -3,7 +3,7 @@ This project applies game theory to baseball, computing mixed strategies for
 pitchers with Markov games.
 
 ## Model Overview
-State is made up of the current count, the number of runs, the number of outs, and 
+State is made up of the current count, the number of outs, and 
 the occupied bases. The pitcher's actions are made up of the pitch type and location, 
 in a 5x5 grid. The batter's actions are simply to swing or take. 
 
@@ -17,7 +17,7 @@ The outcome, which is either a hit (single, double, triple, home-run), an out, a
 is used to transition to a new state. Our transition function heavily simplifies the actual
 workings of the game. We assume each player advances the number of bases corresponding to the hit.
 
-Of course, the value of a state is simply the number of runs.
+Of course, the reward of an action over a state is simply the expected number of runs.
 
 ## Limitations
 - Our model is currently oblivious to plays that happen on field, besides the number of bases achieved
@@ -31,6 +31,3 @@ the batter's intentions, which seems difficult.
 - The pitch types simplify on the data given, where perhaps more of the numeric information could be of use. 
 
 - In predicting swing results, we do not differentiate between the batter directly getting out and outs on the field.
-
-- Due to the method of the value iteration algorithm, we limit the number of runs per inning
-to 5.

@@ -1,4 +1,3 @@
-import warnings
 from collections import defaultdict
 
 import cvxpy as cp
@@ -29,16 +28,16 @@ type O = bool
 type S = AtBatState
 
 pitcher_actions: list[A] = [(pitch_type, zone) for zone in NON_BORDERLINE_ZONES for pitch_type in PitchType]
-batter_actions: list[O] = [True, False]
+batter_actions: list[O] = [False, True]  # Order is important!
 game_states: list[S] = [
-    AtBatState(balls=balls, strikes=strikes, runs=runs, outs=outs, first=first, second=second, third=third)
-    for balls in range(4) for strikes in range(3) for runs in range(6) for outs in range(3)
-    for first in [True, False] for second in [True, False] for third in [True, False]
+    AtBatState(balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third)
+    for balls in range(4) for strikes in range(3) for outs in range(3)
+    for first in [False, True] for second in [False, True] for third in [False, True]
 ]
-final_states: list[S] = [  # Terminal states do not require the same calculations
-    AtBatState(balls=balls, strikes=strikes, runs=runs, outs=3, first=first, second=second, third=third)
-    for balls in range(5) for strikes in range(3) for runs in range(6)
-    for first in [True, False] for second in [True, False] for third in [True, False]
+final_states: list[S] = [  # Terminal states are treated a bit differently
+    AtBatState(balls=balls, strikes=strikes, outs=3, first=first, second=second, third=third)
+    for balls in range(4) for strikes in range(3)
+    for first in [False, True] for second in [False, True] for third in [False, True]
 ]
 total_states = game_states + final_states
 
@@ -46,16 +45,22 @@ total_states_dict = {state: i for i, state in enumerate(total_states)}
 
 # We define some type aliases to improve readability, note how they are indexed into
 type Policy = list[list[float]]  # [S_i][A_i] -> float
-type TransitionDistribution = list[list[list[dict[int, float]]]]  # [S_i][A_i][O_i] -> {total_states_i: float}
+type TransitionDistribution = list[list[list[dict[int, tuple[float, float]]]]]  # [S_i][A_i][O_i] -> {total_states_i: (next state probability, reward)}
 
 # These distributions can be indexed into according to the lists defined above
-type SwingOutcomeDistribution = list[list[list[float]]]   # [S_i][A_i][SwingResult] -> float
-type PitcherControlDistribution = list[list[float]]  # [A_i][ZONE_i] -> float
-type BatterPatienceDistribution = list[list[list[float]]]  # [S_i][PitchType][(BORDERLINE_)ZONE_i] -> float
+type SwingOutcomeDistribution = list[list[list[float]]]   # [S_i][A_i][SwingResult] -> swing result probability
+type PitcherControlDistribution = list[list[float]]  # [A_i][ZONE_i] -> pitch outcome zone probability
+type BatterPatienceDistribution = list[list[list[float]]]  # [S_i][PitchType][(BORDERLINE_)ZONE_i] -> batter swing probability
 
 assert ZONES[0] == BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing relies on this
 
 batch_size = 512
+
+
+def tuple_help():
+    """Utility for default dict"""
+
+    return 0, 0
 
 
 def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]]) -> dict[tuple[Pitcher, Batter], SwingOutcomeDistribution]:
@@ -210,7 +215,7 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
     pitcher_control = calculate_pitcher_control_distribution([pitcher])[pitcher] if pitcher_control is None else pitcher_control
     batter_patience = calculate_batter_patience_distribution([batter])[batter] if batter_patience is None else batter_patience
 
-    transition_distribution: TransitionDistribution = [[[defaultdict(float) for _ in range(len(batter_actions))]
+    transition_distribution: TransitionDistribution = [[[defaultdict(tuple_help) for _ in range(len(batter_actions))]
                                                         for _ in range(len(pitcher_actions))] for _ in range(len(game_states))]
 
     for state_i, state in tqdm(enumerate(game_states), desc='Calculating transition distribution', total=len(game_states)):
@@ -240,13 +245,22 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
                             for swing_result_i, result_prob in enumerate(swing_results):
                                 swing_result = SwingResult(swing_result_i)
                                 next_state = state.transition_from_pitch_result(swing_result.to_pitch_result())
+
+                                reward = next_state.value() - state.value()
+                                next_state.num_runs = 0  # We don't want to distinguish between states with different runs
+
                                 next_state_i = total_states_dict[next_state]
-                                transition_distribution[state_i][action_i][batter_swung][next_state_i] += prob * result_prob * swing_prob
+                                current_prob = transition_distribution[state_i][action_i][batter_swung][next_state_i][0]
+                                transition_distribution[state_i][action_i][batter_swung][next_state_i] = (current_prob + prob * result_prob * swing_prob, reward)
                         else:
                             next_state = state.transition_from_pitch_result(PitchResult.CALLED_STRIKE if outcome_zone.is_strike
                                                                             else PitchResult.CALLED_BALL)
+                            reward = next_state.value() - state.value()
+                            next_state.num_runs = 0
+
                             next_state_i = total_states_dict[next_state]
-                            transition_distribution[state_i][action_i][batter_swung][next_state_i] += prob * swing_prob
+                            current_prob = transition_distribution[state_i][action_i][batter_swung][next_state_i][0]
+                            transition_distribution[state_i][action_i][batter_swung][next_state_i] = (current_prob + prob * swing_prob, reward)
 
     return transition_distribution
 
@@ -292,8 +306,8 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
 
     # Stores the "value" of each state, indexed according to total_states
     value = [0 for _ in total_states]
-    for final_state_i, state in enumerate(final_states):
-        value[final_state_i + len(game_states)] = state.value()  # Initialize terminal states to their true values
+    # for final_state_i, state in enumerate(final_states):
+    #     value[final_state_i + len(game_states)] = state.value()  # Initialize terminal states to their true values
 
     # Stores the policy for each state, indexed according to game_states
     policy: Policy = [[1 / len(pitcher_actions) for _ in pitcher_actions] for _ in game_states]
@@ -301,7 +315,7 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
     transition_distribution = precalculate_transition_distribution(pitcher, batter) if transition_distribution is None else transition_distribution
 
     # The expected "immediate" reward for each state-action pair, index with [S][A][O]
-    reward = [[[sum([prob * total_states[next_state_i].value() for next_state_i, prob in transition_distribution[s_i][a_i][o].items()])
+    reward = [[[sum([prob * reward for next_state_i, (prob, reward) in transition_distribution[s_i][a_i][o].items()])
                 for o in batter_actions] for a_i in range(len(pitcher_actions))] for s_i in range(len(game_states))]
 
     difference = float('inf')
@@ -313,11 +327,13 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
         new_policy = []
         new_value = value.copy()
 
-        # Note that these can be parallelized
+        # Note, this can be parallelized
         for state_i, state in tqdm(enumerate(game_states), f'Iterating over values, iter={iter_num}', total=len(game_states)):
             action_quality = [[reward[state_i][a_i][o] + discount_factor * sum([prob * value[next_state_i]
-                                                                                for next_state_i, prob in transition_distribution[state_i][a_i][o].items()])
+                                                                                for next_state_i, (prob, reward) in
+                                                                                transition_distribution[state_i][a_i][o].items()])
                                for o in batter_actions] for a_i in range(len(pitcher_actions))]
+
             new_state_policy, new_value[state_i] = update_policy(action_quality)
             new_policy.append(new_state_policy)
 
@@ -328,21 +344,7 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
 
         print(difference)
 
-    # Round
-    for s_i, state in enumerate(policy):
-        for a_i, action in enumerate(state):
-            policy[s_i][a_i] = round(policy[s_i][a_i], 3)
-
     return policy, value
-
-
-def get_actions_for_state(policy: Policy, state: AtBatState) -> dict[A, float]:
-    state_i = total_states_dict[state]
-    actions = {}
-    for a_i, prob in enumerate(policy[state_i]):
-        if prob > 0:
-            actions[pitcher_actions[a_i]] = prob
-    return actions
 
 
 def main():
@@ -351,8 +353,9 @@ def main():
     pitcher = list(bd.pitchers.values())[0]
     batter = list(bd.batters.values())[0]
 
-    optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-5, discount_factor=0.95)
-    print(optimal_policy)
+    optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3, discount_factor=0.95)
+    torch.save(optimal_policy, 'optimal_policy.pth')
+    torch.save(value, 'discovered_value.pth')
 
 
 if __name__ == '__main__':

@@ -64,7 +64,7 @@ class AtBatState:
             return next_state
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
-                (result == PitchResult.SWINGING_FOUL and next_state.strikes == 2)):
+                (result == PitchResult.SWINGING_FOUL and next_state.strikes < 3)):
             next_state.strikes += 1
         elif result == PitchResult.CALLED_BALL:
             next_state.balls += 1
