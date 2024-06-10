@@ -1,3 +1,4 @@
+import random
 from collections import defaultdict
 
 import cvxpy as cp
@@ -305,9 +306,7 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
     """
 
     # Stores the "value" of each state, indexed according to total_states
-    value = [0 for _ in total_states]
-    # for final_state_i, state in enumerate(final_states):
-    #     value[final_state_i + len(game_states)] = state.value()  # Initialize terminal states to their true values
+    value = [random.random() for _ in game_states] + [0 for _ in final_states]
 
     # Stores the policy for each state, indexed according to game_states
     policy: Policy = [[1 / len(pitcher_actions) for _ in pitcher_actions] for _ in game_states]
@@ -354,6 +353,7 @@ def main():
     batter = list(bd.batters.values())[0]
 
     optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3, discount_factor=0.95)
+    print(value[0])
     torch.save(optimal_policy, 'optimal_policy.pth')
     torch.save(value, 'discovered_value.pth')
 
