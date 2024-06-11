@@ -10,11 +10,12 @@ class Pitch:
     A Pitch is represented as a pair of a pitch type and a location in the strike zone.
     """
 
-    def __init__(self, at_bat_state: AtBatState, at_bat: AtBat, location: Zone | None,
+    def __init__(self, at_bat_state: AtBatState, at_bat: AtBat, pitch_number: int, location: Zone | None,
                  pitch_type: PitchType | None, speed: float, pitch_result: PitchResult | None):
         """
         :param at_bat_state: The current state of the at-bat BEFORE the pitch is thrown
         :param at_bat: The full at-bat event that the pitch is part of
+        :param pitch_number: The number of the pitch in the at-bat
         :param location: The location of the pitch
         :param pitch_type: The type of the pitch
         :param speed: The speed of the pitch
@@ -23,6 +24,7 @@ class Pitch:
 
         self.at_bat_state = at_bat_state
         self.at_bat = at_bat
+        self.pitch_number = pitch_number
         self.location = location
         self.type = pitch_type
         self.speed = speed

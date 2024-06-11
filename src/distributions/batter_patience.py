@@ -16,7 +16,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class BatterSwings(nn.Module):
     """
-    This network learns the swing outcome based on the batter, pitch, and current count.
+    This network learns the swing outcome based on the batter, pitch, and relevant state.
     It's intended to be trained with borderline pitches.
     """
 
@@ -35,17 +35,14 @@ class BatterSwings(nn.Module):
         self.pitch_conv_2 = nn.Conv2d(32, 64, 3)
         self.pitch_linear = nn.Linear(64, 64)
 
-        self.linear_1 = nn.Linear(128 + 64 + 1 + 1, 128)
+        self.linear_1 = nn.Linear(128 + 64 + 7, 128)
         self.linear_2 = nn.Linear(128, 64)
         self.linear_3 = nn.Linear(64, 32)
 
         self.output = nn.Linear(32, 1)
 
-    def forward(self, batter: Tensor, pitch: Tensor, strikes: Tensor, balls: Tensor) -> Tensor:
-        if torch.isnan(batter).any() or torch.isnan(pitch).any() or torch.isnan(strikes).any() or torch.isnan(
-                balls).any():
-            raise ValueError("NaN value found in input tensors")
-
+    def forward(self, batter: Tensor, pitch: Tensor, strikes: Tensor, balls: Tensor, num_runs: Tensor,
+                num_outs: Tensor, batter_on_first: Tensor, second: Tensor, third: Tensor) -> Tensor:
         batter = self.b_dropout_1(batter)
         batter = F.relu(self.b_conv_1(batter))
         batter = F.relu(self.b_conv_2(batter))
@@ -60,15 +57,18 @@ class BatterSwings(nn.Module):
 
         strikes = strikes.unsqueeze(1)
         balls = balls.unsqueeze(1)
+        num_runs = num_runs.unsqueeze(1)
+        num_outs = num_outs.unsqueeze(1)
+        batter_on_first = batter_on_first.unsqueeze(1)
+        second = second.unsqueeze(1)
+        third = third.unsqueeze(1)
 
-        output = torch.cat((batter, pitch, strikes, balls), dim=1)
+        output = torch.cat((batter, pitch, strikes, balls, num_runs,
+                            num_outs, batter_on_first, second, third), dim=1)
         output = F.relu(self.linear_1(output))
         output = F.relu(self.linear_2(output))
         output = F.relu(self.linear_3(output))
         output = torch.sigmoid(self.output(output))
-
-        if torch.isnan(output).any():
-            raise ValueError("NaN value found in output tensor")
 
         return output
 
@@ -76,7 +76,12 @@ class BatterSwings(nn.Module):
 def batter_patience_map(pitch_idx: int, pitch: Pitch) -> (int, (Tensor, Tensor, Tensor, Tensor), Tensor):
     return (pitch_idx, (pitch.at_bat.batter.data, pitch.get_one_hot_encoding(),
                         torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
-                        torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32)),
+                        torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32),
+                        torch.tensor(pitch.at_bat_state.num_runs, dtype=torch.float32),
+                        torch.tensor(pitch.at_bat_state.num_outs, dtype=torch.float32),
+                        torch.tensor(int(pitch.at_bat_state.first), dtype=torch.float32),
+                        torch.tensor(int(pitch.at_bat_state.second), dtype=torch.float32),
+                        torch.tensor(int(pitch.at_bat_state.third), dtype=torch.float32)),
             torch.tensor(int(pitch.result.batter_swung()), dtype=torch.float32))
 
 
@@ -90,7 +95,7 @@ def get_batter_patience_set(data: BaseballData) -> (PitchDataset, PitchDataset):
     )
 
 
-def train(epochs: int = 50, batch_size: int = 64, learning_rate: float = 0.001,
+def train(epochs: int = 50, batch_size: int = 512, learning_rate: float = 0.001,
           path: str = '../../model_weights/batter_patience.pth'):
     data = BaseballData.load_with_cache()
 
@@ -115,13 +120,11 @@ def train(epochs: int = 50, batch_size: int = 64, learning_rate: float = 0.001,
     for epoch in range(epochs):
         model.train()
         training_loss = 0
-        for pitch_idx, (batter, pitch, strikes, balls), swing in tqdm(training_dataloader, leave=True,
-                                                                      total=loader_length, desc=f'Epoch {epoch + 1}'):
-            batter, pitch, strikes, balls, swing = (batter.to(device), pitch.to(device), strikes.to(device),
-                                                    balls.to(device), swing.to(device))
-
+        for pitch_idx, data, swing in tqdm(training_dataloader, leave=True, total=loader_length, desc=f'Epoch {epoch + 1}'):
+            data = [d.to(device) for d in data]
+            swing = swing.to(device)
             optimizer.zero_grad()
-            output = model.forward(batter, pitch, strikes, balls)
+            output = model.forward(*data)
             loss: Tensor = criterion(output, swing.unsqueeze(1))
 
             loss.backward()
@@ -133,11 +136,10 @@ def train(epochs: int = 50, batch_size: int = 64, learning_rate: float = 0.001,
         model.eval()
         with torch.no_grad():
             total_loss = 0
-            for pitch_idx, (batter, pitch, strikes, balls), swing in validation_dataloader:
-                batter, pitch, strikes, balls, swing = (batter.to(device), pitch.to(device), strikes.to(device),
-                                                        balls.to(device), swing.to(device))
-
-                output = model.forward(batter, pitch, strikes, balls)
+            for pitch_idx, data, swing in validation_dataloader:
+                data = [d.to(device) for d in data]
+                swing = swing.to(device)
+                output = model.forward(*data)
                 loss = criterion(output, swing.unsqueeze(1))
 
                 total_loss += loss.item()
@@ -150,4 +152,6 @@ def train(epochs: int = 50, batch_size: int = 64, learning_rate: float = 0.001,
 
 
 if __name__ == '__main__':
-    train(batch_size=64, learning_rate=0.0002)
+    # Lower batch_size does not work as well on this model, possibly because of the high amount of
+    # randomness in a batter's swing decision. Note, this did not quite converge in 50 epochs.
+    train(epochs=50, batch_size=512, learning_rate=0.0003)

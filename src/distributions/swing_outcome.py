@@ -16,7 +16,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class SwingOutcome(nn.Module):
     """
-    This network learns the distribution of a swing based on the pitcher, batter, pitch, and current count.
+    This network learns the distribution of a swing based on the pitcher, batter, pitch, and relevant state.
     """
 
     def __init__(self):
@@ -40,13 +40,14 @@ class SwingOutcome(nn.Module):
         self.pitch_conv_2 = nn.Conv2d(32, 64, 3)
         self.pitch_linear = nn.Linear(64, 64)
 
-        self.linear_1 = nn.Linear(128 + 128 + 64 + 1 + 1, 128)
+        self.linear_1 = nn.Linear(128 + 128 + 64 + 7, 128)
         self.linear_2 = nn.Linear(128, 64)
         self.linear_3 = nn.Linear(64, 32)
         self.output = nn.Linear(32, len(SwingResult))
         self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, pitcher: Tensor, batter: Tensor, pitch: Tensor, strikes: Tensor, balls: Tensor) -> Tensor:
+    def forward(self, pitcher: Tensor, batter: Tensor, pitch: Tensor, strikes: Tensor, balls: Tensor,
+                num_runs: Tensor, num_outs: Tensor, batter_on_first: Tensor, second: Tensor, third: Tensor) -> Tensor:
         pitcher = self.p_dropout_1(pitcher)
         pitcher = F.relu(self.p_conv_1(pitcher))
         pitcher = F.relu(self.p_conv_2(pitcher))
@@ -68,8 +69,14 @@ class SwingOutcome(nn.Module):
 
         strikes = strikes.unsqueeze(1)
         balls = balls.unsqueeze(1)
+        num_runs = num_runs.unsqueeze(1)
+        num_outs = num_outs.unsqueeze(1)
+        batter_on_first = batter_on_first.unsqueeze(1)
+        second = second.unsqueeze(1)
+        third = third.unsqueeze(1)
 
-        output = torch.cat((pitcher, batter, pitch, strikes, balls), dim=1)
+        output = torch.cat((pitcher, batter, pitch, strikes, balls,
+                            num_runs, num_outs, batter_on_first, second, third), dim=1)
         output = F.relu(self.linear_1(output))
         output = F.relu(self.linear_2(output))
         output = F.relu(self.linear_3(output))
@@ -81,7 +88,12 @@ def map_swing_outcome(idx: int, pitch: Pitch):
     return (idx, (pitch.at_bat.pitcher.data, pitch.at_bat.batter.data,
                   pitch.get_one_hot_encoding(),
                   torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32)),
+                  torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32),
+                  torch.tensor(pitch.at_bat_state.num_runs, dtype=torch.float32),
+                  torch.tensor(pitch.at_bat_state.num_outs, dtype=torch.float32),
+                  torch.tensor(pitch.at_bat_state.first, dtype=torch.float32),
+                  torch.tensor(pitch.at_bat_state.second, dtype=torch.float32),
+                  torch.tensor(pitch.at_bat_state.third, dtype=torch.float32)),
             SwingResult.from_pitch_result(pitch.result).get_one_hot_encoding())
 
 
@@ -128,16 +140,13 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
     for epoch in range(epochs):
         model.train()
         training_loss = 0
-        for i, (pitch_idx, (pitcher, batter, pitch, strikes, balls), target) in tqdm(enumerate(training_dataloader),
-                                                                                     leave=True,
-                                                                                     total=loader_length,
-                                                                                     desc=f'Epoch {epoch + 1}'):
-            pitcher, batter, pitch, strikes, balls = (pitcher.to(device), batter.to(device), pitch.to(device),
-                                                      strikes.to(device), balls.to(device))
+        for i, (pitch_idx, data, target) in tqdm(enumerate(training_dataloader), leave=True,
+                                                 total=loader_length, desc=f'Epoch {epoch + 1}'):
+            data = [d.to(device) for d in data]
             target: Tensor = target.to(device)
 
             optimizer.zero_grad()
-            output = model.forward(pitcher, batter, pitch, strikes, balls)
+            output = model.forward(*data)
             loss: Tensor = criterion(output, target)
             loss.backward()
             optimizer.step()
@@ -150,17 +159,16 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
         model.eval()
         with torch.no_grad():
             total_loss = 0
-            for i, (pitch_idx, (pitcher, batter, pitch, strikes, balls), result) in enumerate(testing_dataloader):
-                pitcher, batter, pitch, strikes, balls = (pitcher.to(device), batter.to(device), pitch.to(device),
-                                                          strikes.to(device), balls.to(device))
+            for i, (pitch_idx, data, result) in enumerate(testing_dataloader):
+                data = [d.to(device) for d in data]
                 result: Tensor = result.to(device)
 
-                output = model(pitcher, batter, pitch, strikes, balls)
+                output = model(*data)
                 total_loss += criterion(output, result)
 
             print(f'Epoch {epoch + 1}, '
-                  f'training loss: {1000 * training_loss / len(training_set)}, '
-                  f'testing loss: {1000 * total_loss / len(testing_set)}')
+                  f'training loss: {training_loss / len(training_dataloader)}, '
+                  f'testing loss: {total_loss / len(testing_dataloader)}')
 
         scheduler.step()
 
@@ -168,4 +176,4 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
 if __name__ == '__main__':
     # Testing could probably find a slightly better gamma value between 2.6 and 3.0
     # However, this kind of testing really requires another split of the data
-    train(epochs=10, learning_rate=0.0001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')
+    train(epochs=50, learning_rate=0.001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')

@@ -1,21 +1,27 @@
+import random
 from collections import defaultdict
 
 import cvxpy as cp
 import torch
 from torch.distributions import MultivariateNormal
 from torch.utils.data import DataLoader
-from tqdm.notebook import tqdm
+
+try:
+    ipython_name = get_ipython().__class__.__name__
+    from tqdm.notebook import tqdm
+except NameError:
+    from tqdm import tqdm
 
 from src.data.data_loading import BaseballData
 from src.data.datasets import SwingResult, PitchDataset, PitchControlDataset
 from src.distributions.batter_patience import BatterSwings, batter_patience_map
 from src.distributions.pitcher_control import PitcherControl
 from src.distributions.swing_outcome import SwingOutcome, map_swing_outcome
-from src.model.at_bat import AtBatState, PitchResult, AtBatOutcome, AtBat
+from src.model.at_bat import AtBatState, PitchResult, AtBat
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Pitcher, Batter
-from src.model.zones import Zone, NON_BORDERLINE_ZONES, get_zone, BORDERLINE_ZONES, get_zone_batched
+from src.model.zones import ZONES, Zone, NON_BORDERLINE_ZONES, BORDERLINE_ZONES, get_zones_batched
 
 # To simplify typing, in accordance with the reference paper's notation
 type A = tuple[PitchType, Zone]
@@ -23,21 +29,42 @@ type O = bool
 type S = AtBatState
 
 pitcher_actions: list[A] = [(pitch_type, zone) for zone in NON_BORDERLINE_ZONES for pitch_type in PitchType]
-batter_actions: list[O] = [True, False]
-game_states: list[S] = [AtBatState(balls=balls, strikes=strikes) for balls in range(4) for strikes in range(3)]  # Normal states
-final_states: list[S] = ([AtBatState(outcome=AtBatOutcome.BASE, balls=balls, strikes=strikes) for balls in range(5) for strikes in range(3)] +  # Base states
-                         [AtBatState(outcome=AtBatOutcome.OUT, balls=balls, strikes=strikes) for balls in range(4) for strikes in range(4)])  # Out states
+batter_actions: list[O] = [False, True]  # Order is important!
+game_states: list[S] = [
+    AtBatState(balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third)
+    for balls in range(4) for strikes in range(3) for outs in range(3)
+    for first in [False, True] for second in [False, True] for third in [False, True]
+]
+final_states: list[S] = [  # Terminal states are treated a bit differently
+    AtBatState(balls=balls, strikes=strikes, outs=3, first=first, second=second, third=third)
+    for balls in range(4) for strikes in range(3)
+    for first in [False, True] for second in [False, True] for third in [False, True]
+]
+total_states = game_states + final_states
 
-# We define some type aliases to improve readability
-type Policy = defaultdict[S, dict[A, float]]
-type TransitionDistribution = dict[S, dict[A, dict[O, dict[S, float]]]]
+total_states_dict = {state: i for i, state in enumerate(total_states)}
 
-type SwingOutcomeDistribution = dict[S, dict[A, dict[SwingResult, float]]]
-type PitcherControlDistribution = dict[A, dict[Zone, float]]
-type BatterPatienceDistribution = dict[S, dict[A, float]]
+# We define some type aliases to improve readability, note how they are indexed into
+type Policy = list[list[float]]  # [S_i][A_i] -> float
+type TransitionDistribution = list[list[list[dict[int, tuple[float, float]]]]]  # [S_i][A_i][O_i] -> {total_states_i: (next state probability, reward)}
+
+# These distributions can be indexed into according to the lists defined above
+type SwingOutcomeDistribution = list[list[list[float]]]   # [S_i][A_i][SwingResult] -> swing result probability
+type PitcherControlDistribution = list[list[float]]  # [A_i][ZONE_i] -> pitch outcome zone probability
+type BatterPatienceDistribution = list[list[list[float]]]  # [S_i][PitchType][(BORDERLINE_)ZONE_i] -> batter swing probability
+
+assert ZONES[0] == BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing relies on this
+
+batch_size = 512
 
 
-def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]], batch_size: int = 512) -> dict[tuple[Pitcher, Batter], SwingOutcomeDistribution]:
+def tuple_help():
+    """Utility for default dict"""
+
+    return 0, 0
+
+
+def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]]) -> dict[tuple[Pitcher, Batter], SwingOutcomeDistribution]:
     """
     Calculates the distribution of swing outcomes for a list of pitcher and batter pairs, given the current game state.
     This method takes in a list to allow for batch processing.
@@ -45,39 +72,40 @@ def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]],
     :return: A dictionary mapping a state, pitcher action and batter action to a distribution of swing outcomes
     """
 
-    swing_outcome = defaultdict(lambda: defaultdict(defaultdict))
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     swing_outcome_model = SwingOutcome().to(device)
-    swing_outcome_model.load_state_dict(torch.load('../../model_weights/swing_outcome, g=2.75.pth'))
+    swing_outcome_model.load_state_dict(torch.load('../../model_weights/swing_outcome.pth'))
     swing_outcome_model.eval()
 
-    for state in tqdm(game_states, desc='Calculating swing outcomes'):
-        for pitch in tqdm(pitcher_actions, leave=False):
-            # Some finicky code is needed to batch process the swing outcome model, once state gets
-            # more complicated, we'll need to batch process a loop out of this
-            pitch_type, zone = pitch
-            pitches = [Pitch(state, AtBat(None, pitcher, batter, state), zone, pitch_type, 0, PitchResult.HIT) for pitcher, batter in matchups]
-            pitch_dataset = PitchDataset(data_source=None, pitches=pitches, map_to=map_swing_outcome)
-            pitch_dataloader = DataLoader(pitch_dataset, batch_size=batch_size, shuffle=False)
+    swing_outcome = {}
 
-            for i, (pitch_idx, pitch_data, target) in enumerate(pitch_dataloader):
-                pitch_data = [d.to(device) for d in pitch_data]
-                outcome_tensor = swing_outcome_model(*pitch_data)
+    for pitcher, batter in tqdm(matchups, desc='Calculating swing outcomes'):
+        swing_outcome[(pitcher, batter)] = [[[] for _ in range(len(pitcher_actions))] for _ in range(len(game_states))]
 
-                # Iterate through the batched outcomes
-                outcome_list = outcome_tensor.squeeze().tolist()
-                if not isinstance(outcome_list[0], list):
-                    outcome_list = [outcome_list]
+        pitch_states = [(state_i, pitch_i)
+                        for state_i in range(len(game_states)) for pitch_i in range(len(pitcher_actions))]
+        pitch_data = [Pitch(game_states[state_i], AtBat(None, pitcher, batter, game_states[state_i]),
+                            0, pitcher_actions[pitch_i][1], pitcher_actions[pitch_i][0], 0, PitchResult.HIT_SINGLE)
+                      for state_i, pitch_i in pitch_states]
+        pitch_dataset = PitchDataset(data_source=None, pitches=pitch_data, map_to=map_swing_outcome)
+        pitch_dataloader = DataLoader(pitch_dataset, batch_size=batch_size, shuffle=False)
 
-                for j, (pitcher, batter) in enumerate(matchups[i * batch_size:(i + 1) * batch_size]):
-                    outcome_distribution = {SwingResult(k): outcome_list[j][k] for k in range(len(outcome_list[j]))}
-                    swing_outcome[(pitcher, batter)][state][pitch] = outcome_distribution
+        for batch, (pitch_idx, data, target) in enumerate(pitch_dataloader):
+            data = [d.to(device) for d in data]
+            outcome_tensor = swing_outcome_model(*data)
+
+            result_distributions = outcome_tensor.squeeze().tolist()
+            if not isinstance(result_distributions[0], list):  # In case the batch is a single element
+                result_distributions = [result_distributions]
+
+            for i, result_distribution in enumerate(result_distributions):
+                state_i, pitch_i = pitch_states[batch * batch_size + i]
+                swing_outcome[(pitcher, batter)][state_i][pitch_i] = result_distribution
 
     return swing_outcome
 
 
-def calculate_pitcher_control_distribution(pitchers: list[Pitcher], batch_size: int = 512) -> dict[Pitcher, PitcherControlDistribution]:
+def calculate_pitcher_control_distribution(pitchers: list[Pitcher]) -> dict[Pitcher, PitcherControlDistribution]:
     """
     Calculates the distribution of actual pitch outcomes for a given pitcher, given the intended pitch type and zone
 
@@ -92,11 +120,13 @@ def calculate_pitcher_control_distribution(pitchers: list[Pitcher], batch_size: 
 
     pitcher_type_control = defaultdict(defaultdict)
 
-    # This dataset class automatically iterates over pitch types
+    # This dataset class automatically iterates over pitch types, empty_data is a custom flag for this purpose
     pitch_control_dataset = PitchControlDataset(data_source=None, pitchers=pitchers, empty_data=True)
     dataloader = DataLoader(pitch_control_dataset, batch_size=batch_size, shuffle=False)
 
-    for i, (p_i, p_type, p_data, distribution) in tqdm(enumerate(dataloader), desc='Calculating pitcher control'):
+    num_batches = len(dataloader)
+    for i, (p_i, p_type, p_data, distribution) in tqdm(enumerate(dataloader), desc='Calculating pitcher control',
+                                                       leave=False, total=num_batches):
         p_data = [d.to(device) for d in p_data]
         control_tensor = pitcher_control_model(*p_data)
 
@@ -112,9 +142,11 @@ def calculate_pitcher_control_distribution(pitchers: list[Pitcher], batch_size: 
             pitcher_type_control[pitcher][pitch_type] = gaussian
 
     # To make things simple, we use random sampling to find a distribution of pitch outcomes
-    pitcher_control = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    pitcher_control = {}
     for pitcher in tqdm(pitchers, desc='Sampling pitcher control'):
-        for pitch in pitcher_actions:
+        pitcher_control[pitcher] = [[0 for _ in range(len(ZONES))] for _ in range(len(pitcher_actions))]
+
+        for pitch_i, pitch in enumerate(pitcher_actions):
             pitch_type, intended_zone = pitch
             zone_center = intended_zone.center()
             gaussian = pitcher_type_control[pitcher][pitch_type]
@@ -122,42 +154,50 @@ def calculate_pitcher_control_distribution(pitchers: list[Pitcher], batch_size: 
 
             num_samples = 1000
             sample_pitches = gaussian.sample(torch.Size((num_samples,)))
-            zones = get_zone_batched(sample_pitches[:, 0], sample_pitches[:, 1])
-            for zone in zones:
-                pitcher_control[pitcher][pitch][zone] += 1 / num_samples
+            zones = get_zones_batched(sample_pitches[:, 0], sample_pitches[:, 1])
+            for zone_i in zones:
+                pitcher_control[pitcher][pitch_i][zone_i] += 1 / num_samples
 
     return pitcher_control
 
 
-def calculate_batter_patience_distribution(batters: list[Batter], batch_size: int = 512) -> dict[Batter, BatterPatienceDistribution]:
+def calculate_batter_patience_distribution(batters: list[Batter]) -> dict[Batter, BatterPatienceDistribution]:
     """
     Calculates the distribution of batter patience for a given batter, given the current game state and pitcher action
 
     :return: A dictionary mapping a state and pitcher action (on a borderline zone) to the probability that the batter will swing
     """
 
-    batter_patience = defaultdict(lambda: defaultdict(dict))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     batter_patience_model = BatterSwings().to(device)
     batter_patience_model.load_state_dict(torch.load('../../model_weights/batter_patience.pth'))
     batter_patience_model.eval()
 
-    for state in tqdm(game_states, desc='Calculating batter patience'):
-        for pitch_type in PitchType:
-            for zone in BORDERLINE_ZONES:
-                pitches = [Pitch(state, AtBat(None, None, batter, state), zone, pitch_type, 0, PitchResult.HIT) for batter in batters]
-                patience_dataset = PitchDataset(data_source=None, pitches=pitches, map_to=batter_patience_map)
-                dataloader = DataLoader(patience_dataset, batch_size=batch_size, shuffle=False)
+    batter_patience = {}
+    for batter in tqdm(batters, desc='Calculating batter patience'):
+        batter_patience[batter] = [[[0 for _ in range(len(BORDERLINE_ZONES))] for _ in range(len(PitchType))]
+                                   for _ in range(len(game_states))]
 
-                for i, (pitch_idx, b_data, swing) in enumerate(dataloader):
-                    b_data = [d.to(device) for d in b_data]
-                    swing_percent = batter_patience_model(*b_data).squeeze().tolist()
+        pitch_states = [(state_i, type_i, borderline_zone_i) for state_i in range(len(game_states))
+                        for type_i in range(len(PitchType)) for borderline_zone_i in range(len(BORDERLINE_ZONES))]
+        pitch_data = [Pitch(game_states[state_i], AtBat(None, None, batter, game_states[state_i]),
+                            0, BORDERLINE_ZONES[zone_i], PitchType(type_i), 0, PitchResult.HIT_SINGLE)
+                      for state_i, type_i, zone_i in pitch_states]
 
-                    if not isinstance(swing_percent, list):
-                        swing_percent = [swing_percent]
-                    for j, batter in enumerate(batters[i * batch_size:(i + 1) * batch_size]):
-                        batter_patience[batter][state][(pitch_type, zone)] = swing_percent[j]
+        patience_dataset = PitchDataset(data_source=None, pitches=pitch_data, map_to=batter_patience_map)
+        dataloader = DataLoader(patience_dataset, batch_size=batch_size, shuffle=False)
+
+        for batch, (pitch_idx, data, swing) in enumerate(dataloader):
+            data = [d.to(device) for d in data]
+
+            swing_percent = batter_patience_model(*data).squeeze().tolist()
+            if not isinstance(swing_percent, list):
+                swing_percent = [swing_percent]
+
+            for i, swing_percent in enumerate(swing_percent):
+                state_i, pitch_type_i, zone_i = pitch_states[batch * batch_size + i]
+                batter_patience[batter][state_i][pitch_type_i][zone_i] = swing_percent
 
     return batter_patience
 
@@ -172,28 +212,29 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
     are stochastic.
     """
 
-    batter_patience = calculate_batter_patience_distribution([batter])[batter] if batter_patience is None else batter_patience
     swing_outcome = calculate_swing_outcome_distribution([(pitcher, batter)])[pitcher, batter] if swing_outcome is None else swing_outcome
     pitcher_control = calculate_pitcher_control_distribution([pitcher])[pitcher] if pitcher_control is None else pitcher_control
+    batter_patience = calculate_batter_patience_distribution([batter])[batter] if batter_patience is None else batter_patience
 
-    transition_distribution: TransitionDistribution = defaultdict(dict)
+    transition_distribution: TransitionDistribution = [[[defaultdict(tuple_help) for _ in range(len(batter_actions))]
+                                                        for _ in range(len(pitcher_actions))] for _ in range(len(game_states))]
 
-    for state in game_states:
-        for action in pitcher_actions:
-            transition_distribution[state][action] = {}
+    for state_i, state in tqdm(enumerate(game_states), desc='Calculating transition distribution', total=len(game_states)):
+        for action_i, action in enumerate(pitcher_actions):
             pitch_type, intended_zone = action
             for batter_swung in batter_actions:
-                transition_distribution[state][action][batter_swung] = defaultdict(float)
 
                 # Given a pitcher and batter action, calculate the actual outcome distribution
                 # The pitch outcome is a distribution over zones given the intended pitch
-                for outcome_zone, prob in pitcher_control[action].items():
+                for outcome_zone_i, prob in enumerate(pitcher_control[action_i]):
+
                     # To account for batter patience, we override the outcomes for borderline zones,
                     # to be a measure of the batter's patience. This requires another nested loop
                     swing_probs = {o: float(batter_swung == o) for o in batter_actions}
 
+                    outcome_zone = ZONES[outcome_zone_i]
                     if outcome_zone.is_borderline:
-                        patience = batter_patience[state][(pitch_type, outcome_zone)]
+                        patience = batter_patience[state_i][pitch_type][outcome_zone_i]
                         swing_probs[True] = patience
                         swing_probs[False] = 1 - patience
 
@@ -201,40 +242,54 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
                     # stochastic and the loop is redundant (swing_prob = {True: 1/0, False: 0/1})
                     for outcome_swing, swing_prob in swing_probs.items():
                         if outcome_swing:
-                            swing_results = swing_outcome[state][action]
-                            for swing_result, result_prob in swing_results.items():
+                            swing_results = swing_outcome[state_i][action_i]
+                            for swing_result_i, result_prob in enumerate(swing_results):
+                                swing_result = SwingResult(swing_result_i)
                                 next_state = state.transition_from_pitch_result(swing_result.to_pitch_result())
-                                transition_distribution[state][action][batter_swung][next_state] += prob * result_prob * swing_prob
+
+                                reward = next_state.value() - state.value()
+                                next_state.num_runs = 0  # We don't want to distinguish between states with different runs
+
+                                next_state_i = total_states_dict[next_state]
+                                current_prob = transition_distribution[state_i][action_i][batter_swung][next_state_i][0]
+                                transition_distribution[state_i][action_i][batter_swung][next_state_i] = (current_prob + prob * result_prob * swing_prob, reward)
                         else:
                             next_state = state.transition_from_pitch_result(PitchResult.CALLED_STRIKE if outcome_zone.is_strike
                                                                             else PitchResult.CALLED_BALL)
-                            transition_distribution[state][action][batter_swung][next_state] += prob * swing_prob
+                            reward = next_state.value() - state.value()
+                            next_state.num_runs = 0
+
+                            next_state_i = total_states_dict[next_state]
+                            current_prob = transition_distribution[state_i][action_i][batter_swung][next_state_i][0]
+                            transition_distribution[state_i][action_i][batter_swung][next_state_i] = (current_prob + prob * swing_prob, reward)
 
     return transition_distribution
 
 
-def update_policy(action_quality: dict[A, dict[O, float]]) -> tuple[dict[A, float], float]:
+def update_policy(action_quality: list[list[float]]) -> tuple[list[float], float]:
     """Optimizes a new policy using dynamic programming"""
 
     policy = cp.Variable(len(pitcher_actions))
     policy_constraints = [policy >= 0, cp.sum(policy) == 1, policy <= 0.7]  # Limit the maximum probability of any action
 
     # We want to maximize the minimum expected value of the next state
-    objective = cp.Maximize(cp.minimum(*[sum([policy[a_i] * action_quality[a][o]
-                                       for a_i, a in enumerate(pitcher_actions)]) for o in batter_actions]))
+    objective = cp.Maximize(cp.minimum(*[sum([policy[a_i] * action_quality[a_i][o]
+                                       for a_i in range(len(pitcher_actions))]) for o in batter_actions]))
 
     problem = cp.Problem(objective, policy_constraints)
     problem.solve()
 
-    if problem.status != cp.OPTIMAL:
+    if problem.status != cp.OPTIMAL and problem.status != cp.OPTIMAL_INACCURATE:
         raise ValueError(f'Policy optimization failed, status {problem.status}')
     else:
-        new_policy = {a: policy[a_i].value for a_i, a in enumerate(pitcher_actions)}
+        # if problem.status == cp.OPTIMAL_INACCURATE:
+        #     warnings.warn('Inaccurate optimization detected')
+        new_policy = [policy[a_i].value for a_i in range(len(pitcher_actions))]
         return new_policy, problem.value
 
 
 def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distribution: TransitionDistribution | None = None,
-                             beta: float = 1e-5, discount_factor: float = 0.9) -> tuple[Policy, dict[S, float]]:
+                             beta: float = 1e-5, discount_factor: float = 0.9) -> tuple[Policy, list[float]]:
     """
     Uses value iteration algorithm to calculate the optimal policy for our model, given
     the pitcher and batter. https://doi.org/10.1016/B978-1-55860-335-6.50027-1
@@ -250,42 +305,43 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
     :return: The optimal pitcher policy, assigning a probability to each action in each state and the value of each state
     """
 
-    # Value iteration repeatedly updates the "value" of each state while optimizing the policy
-    value: defaultdict[S, float] = defaultdict(float)
-    for state in final_states:
-        if state.outcome != AtBatOutcome.NONE:
-            value[state] = state.value()  # Initialize final states to their true values
+    # Stores the "value" of each state, indexed according to total_states
+    value = [random.random() for _ in game_states] + [0 for _ in final_states]
 
-    policy: Policy = defaultdict(lambda: {a: 1 / len(pitcher_actions) for a in pitcher_actions})
+    # Stores the policy for each state, indexed according to game_states
+    policy: Policy = [[1 / len(pitcher_actions) for _ in pitcher_actions] for _ in game_states]
 
     transition_distribution = precalculate_transition_distribution(pitcher, batter) if transition_distribution is None else transition_distribution
 
-    # The expected "immediate" reward for each state-action pair
-    reward = {state: {a: {o: sum([transition_distribution[state][a][o][next_state] * next_state.value()
-                                  for next_state in (game_states + final_states)]) for o in batter_actions} for a in pitcher_actions}  for state in game_states}
+    # The expected "immediate" reward for each state-action pair, index with [S][A][O]
+    reward = [[[sum([prob * reward for next_state_i, (prob, reward) in transition_distribution[s_i][a_i][o].items()])
+                for o in batter_actions] for a_i in range(len(pitcher_actions))] for s_i in range(len(game_states))]
 
     difference = float('inf')
+    iter_num = 0
     while difference > beta:
+        iter_num += 1
+
         # Independently optimize the policy for each state
-        new_policy = defaultdict(dict)
-        new_value = defaultdict(float)
-        for state in game_states:
-            action_quality = {a: {o: reward[state][a][o] + discount_factor * sum([transition_distribution[state][a][o][next_state] * value[next_state]
-                                                                                  for next_state in game_states])
-                                  for o in batter_actions} for a in pitcher_actions}
-            new_policy[state], new_value[state] = update_policy(action_quality)
+        new_policy = []
+        new_value = value.copy()
+
+        # Note, this can be parallelized
+        for state_i, state in tqdm(enumerate(game_states), f'Iterating over values, iter={iter_num}', total=len(game_states)):
+            action_quality = [[reward[state_i][a_i][o] + discount_factor * sum([prob * value[next_state_i]
+                                                                                for next_state_i, (prob, reward) in
+                                                                                transition_distribution[state_i][a_i][o].items()])
+                               for o in batter_actions] for a_i in range(len(pitcher_actions))]
+
+            new_state_policy, new_value[state_i] = update_policy(action_quality)
+            new_policy.append(new_state_policy)
 
         # Update values
-        difference = max([abs(new_value[state] - value[state]) for state in game_states])
+        difference = max([abs(new_value[state_i] - value[state_i]) for state_i in range(len(game_states))])
         policy = new_policy
         value = new_value
 
-    # Remove actions with effectively zero probability
-    for state in policy:
-        for action in policy[state].copy():
-            policy[state][action] = round(policy[state][action], 4)
-            if policy[state][action] == 0:
-                del policy[state][action]
+        print(difference)
 
     return policy, value
 
@@ -296,8 +352,10 @@ def main():
     pitcher = list(bd.pitchers.values())[0]
     batter = list(bd.batters.values())[0]
 
-    optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-5, discount_factor=0.9)
-    print(optimal_policy)
+    optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3, discount_factor=0.95)
+    print(value[0])
+    torch.save(optimal_policy, 'optimal_policy.pth')
+    torch.save(value, 'discovered_value.pth')
 
 
 if __name__ == '__main__':

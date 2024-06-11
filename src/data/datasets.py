@@ -18,7 +18,10 @@ class SwingResult(IntEnum):
     STRIKE = 0
     FOUL = 1
     OUT = 2
-    HIT = 3
+    SINGLE = 3
+    DOUBLE = 4
+    TRIPLE = 5
+    HOME_RUN = 6
 
     def get_one_hot_encoding(self):
         """Returns a one-hot encoding of the pitch type."""
@@ -32,10 +35,16 @@ class SwingResult(IntEnum):
             return PitchResult.SWINGING_STRIKE
         elif self == self.FOUL:
             return PitchResult.SWINGING_FOUL
-        elif self == self.HIT:
-            return PitchResult.HIT
         elif self == self.OUT:
-            return PitchResult.OUT
+            return PitchResult.HIT_OUT
+        elif self == self.SINGLE:
+            return PitchResult.HIT_SINGLE
+        elif self == self.DOUBLE:
+            return PitchResult.HIT_DOUBLE
+        elif self == self.TRIPLE:
+            return PitchResult.HIT_TRIPLE
+        elif self == self.HOME_RUN:
+            return PitchResult.HIT_HOME_RUN
 
     @classmethod
     def from_pitch_result(cls, pitch_result: PitchResult):
@@ -45,10 +54,16 @@ class SwingResult(IntEnum):
             return cls.STRIKE
         elif pitch_result == PitchResult.SWINGING_FOUL:
             return cls.FOUL
-        elif pitch_result == PitchResult.HIT:
-            return cls.HIT
-        elif pitch_result == PitchResult.OUT:
+        elif pitch_result == PitchResult.HIT_OUT:
             return cls.OUT
+        elif pitch_result == PitchResult.HIT_SINGLE:
+            return cls.SINGLE
+        elif pitch_result == PitchResult.HIT_DOUBLE:
+            return cls.DOUBLE
+        elif pitch_result == PitchResult.HIT_TRIPLE:
+            return cls.TRIPLE
+        elif pitch_result == PitchResult.HIT_HOME_RUN:
+            return cls.HOME_RUN
 
 
 class PitchDataset(Dataset):

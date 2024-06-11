@@ -4,21 +4,52 @@ from collections import defaultdict
 from typing import Self
 
 import torch
-import winsound
 from torch import nan_to_num, Tensor
 from torch.distributions import MultivariateNormal
 from tqdm import tqdm
 
-from src.model.at_bat import AtBat, AtBatState, AtBatOutcome, PitchResult
+from src.model.at_bat import AtBat, AtBatState, PitchResult
 from src.model.game import Game
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Batter, Pitcher
 from src.model.zones import get_zone, ZONES_DIMENSION
 
-# Some definitions are necessary to map the raw data to our less precise format
-on_base_events = ['Single', 'Double', 'Triple', 'Home Run', 'Walk', 'Intent Walk',
-                  'Hit By Pitch', 'Field Error', 'Catcher Interference']
+# This list was extracted from the raw csv. We ignore most at-bat events, however we are still interested
+# in differentiating between singles, doubles, triples, and home runs. In this case, PitchResult is used "incorrectly"
+at_bat_event_mapping = {
+    'Double': PitchResult.HIT_DOUBLE,
+    'Single': PitchResult.HIT_SINGLE,
+    'Triple': PitchResult.HIT_TRIPLE,
+    'Home Run': PitchResult.HIT_HOME_RUN,
+    # Groundout
+    # Strikeout
+    # Strikeout
+    'Walk': PitchResult.HIT_SINGLE,
+    # Runner Out
+    # Flyout
+    # Forceout
+    # Pop Out
+    'Intent Walk': PitchResult.HIT_SINGLE,
+    # Lineout
+    'Hit By Pitch': PitchResult.HIT_SINGLE,
+    # Grounded Into DP
+    # Sac Bunt
+    # Fielders Choice
+    # Bunt Groundout
+    'Field Error': PitchResult.HIT_SINGLE,
+    # Double Play
+    # Sac Fly
+    # Fielders Choice Out
+    # Bunt Pop Out
+    'Catcher Interference': PitchResult.HIT_SINGLE,
+    # Strikeout - DP
+    # Batter Interference
+    # Sac Fly DP
+    # Bunt Lineout
+    # Sacrifice Bunt DP
+    # Triple Play
+}
 
 pitch_type_mapping = {
     'CH': PitchType.CHANGEUP,
@@ -52,10 +83,10 @@ pitch_result_mapping = {
     'L': PitchResult.SWINGING_STRIKE,  # Foul bunt
     'F': PitchResult.SWINGING_FOUL,  # Regular foul
     'R': PitchResult.SWINGING_FOUL,  # Foul pitchout
-    'D': PitchResult.HIT,  # Hit
-    'E': PitchResult.HIT,  # Hit, with runs scored
-    'H': PitchResult.HIT,  # Hit by pitch, perhaps should be a separate category
-    'X': PitchResult.OUT,  # In play, out(s)
+    'D': PitchResult.HIT_SINGLE,  # Hit
+    'E': PitchResult.HIT_SINGLE,  # Hit, with runs scored
+    'H': PitchResult.HIT_SINGLE,  # Hit by pitch, perhaps should be a separate category
+    'X': PitchResult.HIT_OUT,  # In play, out(s)
 }
 
 
@@ -86,9 +117,9 @@ class BaseballData:
         print('Loading baseball data from cache... ', end='')
 
         if os.path.isfile(processed_data):
-            data = torch.load(processed_data)
+            cached_data = torch.load(processed_data)
             print('done')
-            return data
+            return cached_data
         else:
             data = cls(raw_data_dir=raw_data_dir)
             torch.save(data, processed_data)
@@ -140,14 +171,15 @@ class BaseballData:
                 pitcher_id = int(pitcher_id)
                 game_id = int(game_id)
 
-                outcome = AtBatOutcome.BASE if event in on_base_events else AtBatOutcome.OUT
+                pitch_result = at_bat_event_mapping.get(event, None)
+                outcome_state = AtBatState(balls=None, strikes=None, outs=int(outs), outcome_event=pitch_result)
 
                 self.at_bats[at_bat_id] = AtBat(self.games.get(game_id, None), self.pitchers[pitcher_id],
-                                                self.batters[batter_id], outcome_state=AtBatState(outcome),
+                                                self.batters[batter_id], outcome_state=outcome_state,
                                                 ab_id=at_bat_id)
 
                 # Update the OBP statistics
-                add_hit = int(outcome == AtBatOutcome.BASE)
+                add_hit = pitch_result is not None
                 batter_obp[batter_id] = (batter_obp[batter_id][0] + 1, batter_obp[batter_id][1] + add_hit)
                 pitcher_obp[pitcher_id] = (pitcher_obp[pitcher_id][0] + 1, pitcher_obp[pitcher_id][1] + add_hit)
 
@@ -188,18 +220,26 @@ class BaseballData:
                  _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
                  pitch_result_code, _, pitch_type, _, batter_score, at_bat_id,
                  balls, strikes, outs, pitch_number, player_on_1b, on_2b, on_3b) in tqdm(pitches, desc='Loading pitch data'):
+
                 at_bat = self.at_bats.get(int(float(at_bat_id)), None)
                 loc = (None if not pos_x else 12 * float(pos_x),  # Convert from feet to inches
                        None if not pos_z else 12 * float(pos_z))
-                zone = get_zone(*loc)
+                zone = get_zone(*loc)  # Is there a way to use the batch version of this function?
                 pitch_type = pitch_type_mapping.get(pitch_type, None)
                 pitch_result = pitch_result_mapping.get(pitch_result_code, None)
 
-                pitch = Pitch(AtBatState(AtBatOutcome.NONE, int(float(balls)), int(float(strikes))),
-                              at_bat, zone, pitch_type, start_speed, pitch_result)
+                if pitch_result == PitchResult.HIT_SINGLE:
+                    pitch_result = at_bat.state.outcome_event  # The more fine-grained event is stored in the at-bat
+
+                pitch = Pitch(AtBatState(balls=int(float(balls)), strikes=int(float(strikes)),
+                                         runs=int(float(batter_score)), outs=int(float(outs)),
+                                         first=bool(int(float(player_on_1b))), second=bool(int(float(on_2b))), third=bool(int(float(on_3b)))),
+                              at_bat, pitch_number=int(float(pitch_number)), location=zone, pitch_type=pitch_type,
+                              speed=start_speed, pitch_result=pitch_result)
 
                 # Update the pitch entry
                 self.pitches.append(pitch)
+                at_bat.pitches.append(pitch)
 
                 # Update player statistics
                 if at_bat is not None and pitch.is_valid():
@@ -219,7 +259,7 @@ class BaseballData:
                     increment_statistic(batter_statistics[at_bat.batter]['total_encountered'])
                     if pitch.result.batter_swung():
                         increment_statistic(batter_statistics[at_bat.batter]['total_swung'])
-                    if pitch.result == PitchResult.HIT:
+                    if pitch.result.batter_hit():
                         increment_statistic(batter_statistics[at_bat.batter]['total_hits'])
 
             # Add the aggregate statistics to the players, replacing blank statistics with zeros
@@ -257,4 +297,4 @@ class BaseballData:
 
 
 if __name__ == '__main__':
-    data = BaseballData.load_with_cache()
+    BaseballData.load_with_cache()
