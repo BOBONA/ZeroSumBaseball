@@ -30,11 +30,17 @@ type S = AtBatState
 
 pitcher_actions: list[A] = [(pitch_type, zone) for zone in NON_BORDERLINE_ZONES for pitch_type in PitchType]
 batter_actions: list[O] = [False, True]  # Order is important!
+
 game_states: list[S] = [
     AtBatState(balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third)
     for balls in range(4) for strikes in range(3) for outs in range(3)
     for first in [False, True] for second in [False, True] for third in [False, True]
 ]
+
+# Sort by "lateness" of the state, to optimize the value iteration algorithm
+game_states.sort(key=lambda st: st.num_outs * 100 + (st.balls + st.strikes) * 10 +
+                 int(st.third) * 4 + int(st.second) * 2 + int(st.first), reverse=True)
+
 final_states: list[S] = [  # Terminal states are treated a bit differently
     AtBatState(balls=balls, strikes=strikes, outs=3, first=first, second=second, third=third)
     for balls in range(4) for strikes in range(3)
@@ -56,6 +62,8 @@ type BatterPatienceDistribution = list[list[list[float]]]  # [S_i][PitchType][(B
 assert ZONES[0] == BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing relies on this
 
 batch_size = 512
+
+use_ordered_iteration: bool = True
 
 
 def tuple_help():
@@ -263,14 +271,17 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
                             current_prob = transition_distribution[state_i][action_i][batter_swung][next_state_i][0]
                             transition_distribution[state_i][action_i][batter_swung][next_state_i] = (current_prob + prob * swing_prob, reward)
 
+    print(swing_outcome[total_states_dict[AtBatState()]][0])
+    print([(total_states[i], j) for i, j in transition_distribution[total_states_dict[AtBatState()]][0][1].items()])
+
     return transition_distribution
 
 
-def update_policy(action_quality: list[list[float]]) -> tuple[list[float], float]:
+def update_policy(action_quality: list[list[float]], max_pitch_percentage: float = 0.7) -> tuple[list[float], float]:
     """Optimizes a new policy using dynamic programming"""
 
     policy = cp.Variable(len(pitcher_actions))
-    policy_constraints = [policy >= 0, cp.sum(policy) == 1, policy <= 0.7]  # Limit the maximum probability of any action
+    policy_constraints = [policy >= 0, cp.sum(policy) == 1, policy <= max_pitch_percentage]  # Limit the maximum probability of any action
 
     # We want to maximize the minimum expected value of the next state
     objective = cp.Maximize(cp.minimum(*[sum([policy[a_i] * action_quality[a_i][o]
@@ -289,7 +300,7 @@ def update_policy(action_quality: list[list[float]]) -> tuple[list[float], float
 
 
 def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distribution: TransitionDistribution | None = None,
-                             beta: float = 1e-5, discount_factor: float = 0.9) -> tuple[Policy, list[float]]:
+                             beta: float = 1e-5) -> tuple[Policy, list[float]]:
     """
     Uses value iteration algorithm to calculate the optimal policy for our model, given
     the pitcher and batter. https://doi.org/10.1016/B978-1-55860-335-6.50027-1
@@ -301,11 +312,11 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
     :param pitcher: The pitcher
     :param batter: The batter
     :param beta: The minimum change in value to continue iterating
-    :param discount_factor: Weights future rewards over closer rewards
     :return: The optimal pitcher policy, assigning a probability to each action in each state and the value of each state
     """
 
     # Stores the "value" of each state, indexed according to total_states
+    # Last time I measured, random initialization in this manner converged 1/3 faster
     value = [random.random() for _ in game_states] + [0 for _ in final_states]
 
     # Stores the policy for each state, indexed according to game_states
@@ -326,11 +337,13 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
         new_policy = []
         new_value = value.copy()
 
+        value_src = new_value if use_ordered_iteration else value  # Faster convergence with ordered iteration
+
         # Note, this can be parallelized
         for state_i, state in tqdm(enumerate(game_states), f'Iterating over values, iter={iter_num}', total=len(game_states)):
-            action_quality = [[reward[state_i][a_i][o] + discount_factor * sum([prob * value[next_state_i]
-                                                                                for next_state_i, (prob, reward) in
-                                                                                transition_distribution[state_i][a_i][o].items()])
+            action_quality = [[reward[state_i][a_i][o] + sum([prob * value_src[next_state_i]
+                                                             for next_state_i, (prob, reward) in
+                                                             transition_distribution[state_i][a_i][o].items()])
                                for o in batter_actions] for a_i in range(len(pitcher_actions))]
 
             new_state_policy, new_value[state_i] = update_policy(action_quality)
@@ -346,16 +359,16 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
     return policy, value
 
 
-def main():
+def main(append: str = ''):
     bd = BaseballData.load_with_cache()
 
-    pitcher = list(bd.pitchers.values())[0]
-    batter = list(bd.batters.values())[0]
+    pitcher = list(bd.pitchers.values())[2]  # obp_percentile = 0.21
+    batter = list(bd.batters.values())[0]  # obp_percentile = 0.95
 
-    optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3, discount_factor=0.95)
-    print(value[0])
-    torch.save(optimal_policy, 'optimal_policy.pth')
-    torch.save(value, 'discovered_value.pth')
+    optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3)
+    print(f'ERA {value[total_states_dict[AtBatState()]]}')
+    torch.save(optimal_policy, f'optimal_policy{append}.pth')
+    torch.save(value, f'discovered_value{append}.pth')
 
 
 if __name__ == '__main__':

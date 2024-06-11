@@ -40,6 +40,8 @@ class AtBatState:
 
     Note that outcome_event is a PitchResult, but that this is only used to represent whether the at-bat ended
     on base, and if so, which base the batter reached. This is not a proper usage of the PitchResult enum.
+
+    Also, note that num_runs is not currently used in optimal policy calculations
     """
 
     def __init__(self, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, outcome_event: PitchResult | None = None):
@@ -84,9 +86,6 @@ class AtBatState:
         if next_state.strikes == 3:
             next_state.num_outs += 1
             next_state.balls = next_state.strikes = 0
-
-        if next_state.num_runs > 5:
-            next_state.num_runs = 5
 
         return next_state
 

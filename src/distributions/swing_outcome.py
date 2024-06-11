@@ -44,10 +44,10 @@ class SwingOutcome(nn.Module):
         self.linear_2 = nn.Linear(128, 64)
         self.linear_3 = nn.Linear(64, 32)
         self.output = nn.Linear(32, len(SwingResult))
-        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, pitcher: Tensor, batter: Tensor, pitch: Tensor, strikes: Tensor, balls: Tensor,
-                num_runs: Tensor, num_outs: Tensor, batter_on_first: Tensor, second: Tensor, third: Tensor) -> Tensor:
+                num_runs: Tensor, num_outs: Tensor, batter_on_first: Tensor, second: Tensor, third: Tensor,
+                softmax: bool = False) -> Tensor:
         pitcher = self.p_dropout_1(pitcher)
         pitcher = F.relu(self.p_conv_1(pitcher))
         pitcher = F.relu(self.p_conv_2(pitcher))
@@ -80,7 +80,11 @@ class SwingOutcome(nn.Module):
         output = F.relu(self.linear_1(output))
         output = F.relu(self.linear_2(output))
         output = F.relu(self.linear_3(output))
-        output = self.softmax(self.output(output))
+        output = self.output(output)
+
+        if softmax:
+            output = F.softmax(output, dim=1)
+
         return output
 
 
@@ -103,11 +107,11 @@ def get_swing_outcome_dataset(data: BaseballData) -> [PitchDataset, PitchDataset
         attribute=lambda p: p.at_bat.pitcher,  # Group by pitcher
         filter_on=lambda p: p.result.batter_swung(),
         map_to=map_swing_outcome,
-        seed=80
+        seed=81
     )
 
 
-def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, gamma: float = 2.75,
+def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
           path: str = '../../model_weights/swing_outcome.pth'):
     data = BaseballData.load_with_cache()
     training_set, testing_set = get_swing_outcome_dataset(data)
@@ -128,12 +132,7 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.3)
 
-    # I am struggling to understand why the network won't learn the distribution
-    # with CrossEntropyLoss. It predicts HITS at 0%. Focal loss seems to work, and
-    # some testing yielded 2.75 as the best value. However, I am concerned that this
-    # is merely patching up some other problem
-    # criterion = nn.CrossEntropyLoss()
-    criterion = lambda x, y: sigmoid_focal_loss(x, y, reduction='mean', gamma=gamma)
+    criterion = nn.CrossEntropyLoss()
 
     loader_length = len(training_dataloader)
 
@@ -174,6 +173,5 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001, 
 
 
 if __name__ == '__main__':
-    # Testing could probably find a slightly better gamma value between 2.6 and 3.0
-    # However, this kind of testing really requires another split of the data
-    train(epochs=50, learning_rate=0.001, batch_size=512, gamma=2.75, path=f'../../model_weights/swing_outcome.pth')
+    train(epochs=50, learning_rate=0.0003, batch_size=128,
+          path=f'../../model_weights/swing_outcome_testing.pth')
