@@ -100,7 +100,7 @@ def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]])
 
         for batch, (pitch_idx, data, target) in enumerate(pitch_dataloader):
             data = [d.to(device) for d in data]
-            outcome_tensor = swing_outcome_model(*data)
+            outcome_tensor = swing_outcome_model(*data, softmax=True)
 
             result_distributions = outcome_tensor.squeeze().tolist()
             if not isinstance(result_distributions[0], list):  # In case the batch is a single element
@@ -271,9 +271,6 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
                             current_prob = transition_distribution[state_i][action_i][batter_swung][next_state_i][0]
                             transition_distribution[state_i][action_i][batter_swung][next_state_i] = (current_prob + prob * swing_prob, reward)
 
-    print(swing_outcome[total_states_dict[AtBatState()]][0])
-    print([(total_states[i], j) for i, j in transition_distribution[total_states_dict[AtBatState()]][0][1].items()])
-
     return transition_distribution
 
 
@@ -324,10 +321,6 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
 
     transition_distribution = precalculate_transition_distribution(pitcher, batter) if transition_distribution is None else transition_distribution
 
-    # The expected "immediate" reward for each state-action pair, index with [S][A][O]
-    reward = [[[sum([prob * reward for next_state_i, (prob, reward) in transition_distribution[s_i][a_i][o].items()])
-                for o in batter_actions] for a_i in range(len(pitcher_actions))] for s_i in range(len(game_states))]
-
     difference = float('inf')
     iter_num = 0
     while difference > beta:
@@ -341,9 +334,8 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
 
         # Note, this can be parallelized
         for state_i, state in tqdm(enumerate(game_states), f'Iterating over values, iter={iter_num}', total=len(game_states)):
-            action_quality = [[reward[state_i][a_i][o] + sum([prob * value_src[next_state_i]
-                                                             for next_state_i, (prob, reward) in
-                                                             transition_distribution[state_i][a_i][o].items()])
+            action_quality = [[sum([prob * (reward + value_src[next_state_i])
+                                    for next_state_i, (prob, reward) in transition_distribution[state_i][a_i][o].items()])
                                for o in batter_actions] for a_i in range(len(pitcher_actions))]
 
             new_state_policy, new_value[state_i] = update_policy(action_quality)
@@ -362,11 +354,12 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
 def main(append: str = ''):
     bd = BaseballData.load_with_cache()
 
-    pitcher = list(bd.pitchers.values())[2]  # obp_percentile = 0.21
-    batter = list(bd.batters.values())[0]  # obp_percentile = 0.95
+    pitcher = list(bd.pitchers.values())[90]  # obp_percentile = 0.94
+    batter = list(bd.batters.values())[413]  # obp_percentile = 0.20
 
     optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3)
     print(f'ERA {value[total_states_dict[AtBatState()]]}')
+
     torch.save(optimal_policy, f'optimal_policy{append}.pth')
     torch.save(value, f'discovered_value{append}.pth')
 

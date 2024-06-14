@@ -173,5 +173,4 @@ def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
 
 
 if __name__ == '__main__':
-    train(epochs=50, learning_rate=0.0003, batch_size=128,
-          path=f'../../model_weights/swing_outcome_testing.pth')
+    train(epochs=25, learning_rate=0.0003, batch_size=128, path=f'../../model_weights/swing_outcome.pth')
