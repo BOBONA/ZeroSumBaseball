@@ -21,7 +21,7 @@ Of course, the reward of an action over a state is simply the expected number of
 
 ## Limitations
 - Our model is currently oblivious to plays that happen on field, besides the number of bases achieved
-by the runner and whether the batter gets out. This is significant part of the game that we are ignoring. ↓↓
+by the runner and whether the batter gets out. This is a significant part of the game that we are ignoring. ↓↓
 
 - The Kaggle dataset does have limited information on at-bat events, but it's not clear how 
 to incorporate this into our model. We can learn a distribution of field results given a 

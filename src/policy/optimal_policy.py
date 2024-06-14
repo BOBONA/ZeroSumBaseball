@@ -38,14 +38,16 @@ game_states: list[S] = [
 ]
 
 # Sort by "lateness" of the state, to optimize the value iteration algorithm
-game_states.sort(key=lambda st: st.num_outs * 100 + (st.balls + st.strikes) * 10 +
+game_states.sort(key=lambda st: (st.num_outs + st.num_runs) * 100 + (st.balls + st.strikes) * 10 +
                  int(st.third) * 4 + int(st.second) * 2 + int(st.first), reverse=True)
 
-final_states: list[S] = [  # Terminal states are treated a bit differently
+# Terminal states are stored separately for easier indexing
+final_states: list[S] = [
     AtBatState(balls=balls, strikes=strikes, outs=3, first=first, second=second, third=third)
     for balls in range(4) for strikes in range(3)
     for first in [False, True] for second in [False, True] for third in [False, True]
 ]
+
 total_states = game_states + final_states
 
 total_states_dict = {state: i for i, state in enumerate(total_states)}
@@ -63,6 +65,7 @@ assert ZONES[0] == BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing re
 
 batch_size = 512
 
+# This is a flag that improves the convergence by calculating states with the values of the current iteration
 use_ordered_iteration: bool = True
 
 
@@ -330,7 +333,7 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
         new_policy = []
         new_value = value.copy()
 
-        value_src = new_value if use_ordered_iteration else value  # Faster convergence with ordered iteration
+        value_src = new_value if use_ordered_iteration else value  # Faster convergence with "ordered iteration"
 
         # Note, this can be parallelized
         for state_i, state in tqdm(enumerate(game_states), f'Iterating over values, iter={iter_num}', total=len(game_states)):
@@ -351,17 +354,21 @@ def calculate_optimal_policy(pitcher: Pitcher, batter: Batter, transition_distri
     return policy, value
 
 
-def main(append: str = ''):
+def main():
     bd = BaseballData.load_with_cache()
 
+    # Note how the resulting ERA is highly dependent on the pitcher and batter chosen
+    # Try pitchers[2] (obp_percentile = 0.21) and batters[0] (obp_percentile = 0.95) for a higher ERA
+    # Also note that lower percentile batters often have little data and create unstable results from the models
+
     pitcher = list(bd.pitchers.values())[90]  # obp_percentile = 0.94
-    batter = list(bd.batters.values())[413]  # obp_percentile = 0.20
+    batter = list(bd.batters.values())[513]  # obp_percentile = 0.54
 
     optimal_policy, value = calculate_optimal_policy(pitcher, batter, beta=1e-3)
     print(f'ERA {value[total_states_dict[AtBatState()]]}')
 
-    torch.save(optimal_policy, f'optimal_policy{append}.pth')
-    torch.save(value, f'discovered_value{append}.pth')
+    torch.save(optimal_policy, 'optimal_policy.pth')
+    torch.save(value, 'value.pth')
 
 
 if __name__ == '__main__':
