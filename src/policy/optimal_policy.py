@@ -111,6 +111,7 @@ def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]])
 
             for i, result_distribution in enumerate(result_distributions):
                 state_i, pitch_i = pitch_states[batch * batch_size + i]
+                result_distribution[3] = max(result_distribution[3], 0.12)  # Ensure reasonable values
                 swing_outcome[(pitcher, batter)][state_i][pitch_i] = result_distribution
 
     return swing_outcome
@@ -283,8 +284,8 @@ def update_policy(action_quality: list[list[float]], max_pitch_percentage: float
     policy = cp.Variable(len(pitcher_actions))
     policy_constraints = [policy >= 0, cp.sum(policy) == 1, policy <= max_pitch_percentage]  # Limit the maximum probability of any action
 
-    # We want to maximize the minimum expected value of the next state
-    objective = cp.Maximize(cp.minimum(*[sum([policy[a_i] * action_quality[a_i][o]
+    # We want to minimize the maximum expected value (for the batter) of the next state
+    objective = cp.Minimize(cp.maximum(*[sum([policy[a_i] * action_quality[a_i][o]
                                        for a_i in range(len(pitcher_actions))]) for o in batter_actions]))
 
     problem = cp.Problem(objective, policy_constraints)
@@ -373,3 +374,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+    value = torch.load('value.pth')
+    print(value[total_states_dict[AtBatState()]])

@@ -45,6 +45,8 @@ class AtBatState:
     does have a small effect, it also increases the number of states significantly.
     """
 
+    max_runs = 9
+
     def __init__(self, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, outcome_event: PitchResult | None = None):
         self.balls = balls
         self.strikes = strikes
@@ -63,7 +65,7 @@ class AtBatState:
     def transition_from_pitch_result(self, result: PitchResult) -> Self:
         next_state = AtBatState(self.balls, self.strikes, self.num_runs, self.num_outs, self.first, self.second, self.third)
 
-        if next_state.num_outs >= 3:
+        if next_state.num_outs >= 3 or next_state.num_runs >= AtBatState.max_runs:
             return next_state
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
@@ -88,8 +90,8 @@ class AtBatState:
             next_state.num_outs += 1
             next_state.balls = next_state.strikes = 0
 
-        if next_state.num_runs > 9:
-            next_state.num_runs = 9
+        if next_state.num_runs > AtBatState.max_runs:
+            next_state.num_runs = AtBatState.max_runs
 
         return next_state
 

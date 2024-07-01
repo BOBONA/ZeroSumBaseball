@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
-from torchvision.ops import sigmoid_focal_loss
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData
