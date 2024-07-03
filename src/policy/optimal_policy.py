@@ -7,6 +7,7 @@ from torch.distributions import MultivariateNormal
 from torch.utils.data import DataLoader
 
 try:
+    # noinspection PyUnresolvedReferences
     ipython_name = get_ipython().__class__.__name__
     from tqdm.notebook import tqdm
 except NameError:
@@ -21,14 +22,14 @@ from src.model.at_bat import AtBatState, PitchResult, AtBat
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Pitcher, Batter
-from src.model.zones import ZONES, Zone, NON_BORDERLINE_ZONES, BORDERLINE_ZONES, get_zones_batched
+from src.model.zones import Zone, default
 
 # To simplify typing, in accordance with the reference paper's notation
 type A = tuple[PitchType, Zone]
 type O = bool
 type S = AtBatState
 
-pitcher_actions: list[A] = [(pitch_type, zone) for zone in NON_BORDERLINE_ZONES for pitch_type in PitchType]
+pitcher_actions: list[A] = [(pitch_type, zone) for zone in default.ZONES for pitch_type in PitchType]
 batter_actions: list[O] = [False, True]  # Order is important!
 
 game_states: list[S] = [
@@ -61,7 +62,7 @@ type SwingOutcomeDistribution = list[list[list[float]]]   # [S_i][A_i][SwingResu
 type PitcherControlDistribution = list[list[float]]  # [A_i][ZONE_i] -> pitch outcome zone probability
 type BatterPatienceDistribution = list[list[list[float]]]  # [S_i][PitchType][(BORDERLINE_)ZONE_i] -> batter swing probability
 
-assert ZONES[0] == BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing relies on this
+assert default.COMBINED_ZONES[0] == default.BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing relies on this
 
 batch_size = 512
 
@@ -111,7 +112,6 @@ def calculate_swing_outcome_distribution(matchups: list[tuple[Pitcher, Batter]])
 
             for i, result_distribution in enumerate(result_distributions):
                 state_i, pitch_i = pitch_states[batch * batch_size + i]
-                result_distribution[3] = max(result_distribution[3], 0.12)  # Ensure reasonable values
                 swing_outcome[(pitcher, batter)][state_i][pitch_i] = result_distribution
 
     return swing_outcome
@@ -156,7 +156,7 @@ def calculate_pitcher_control_distribution(pitchers: list[Pitcher]) -> dict[Pitc
     # To make things simple, we use random sampling to find a distribution of pitch outcomes
     pitcher_control = {}
     for pitcher in tqdm(pitchers, desc='Sampling pitcher control'):
-        pitcher_control[pitcher] = [[0 for _ in range(len(ZONES))] for _ in range(len(pitcher_actions))]
+        pitcher_control[pitcher] = [[0 for _ in range(len(default.COMBINED_ZONES))] for _ in range(len(pitcher_actions))]
 
         for pitch_i, pitch in enumerate(pitcher_actions):
             pitch_type, intended_zone = pitch
@@ -166,7 +166,7 @@ def calculate_pitcher_control_distribution(pitchers: list[Pitcher]) -> dict[Pitc
 
             num_samples = 1000
             sample_pitches = gaussian.sample(torch.Size((num_samples,)))
-            zones = get_zones_batched(sample_pitches[:, 0], sample_pitches[:, 1])
+            zones = default.get_zones_batched(sample_pitches[:, 0], sample_pitches[:, 1])
             for zone_i in zones:
                 pitcher_control[pitcher][pitch_i][zone_i] += 1 / num_samples
 
@@ -188,13 +188,13 @@ def calculate_batter_patience_distribution(batters: list[Batter]) -> dict[Batter
 
     batter_patience = {}
     for batter in tqdm(batters, desc='Calculating batter patience'):
-        batter_patience[batter] = [[[0 for _ in range(len(BORDERLINE_ZONES))] for _ in range(len(PitchType))]
+        batter_patience[batter] = [[[0 for _ in range(len(default.BORDERLINE_ZONES))] for _ in range(len(PitchType))]
                                    for _ in range(len(game_states))]
 
         pitch_states = [(state_i, type_i, borderline_zone_i) for state_i in range(len(game_states))
-                        for type_i in range(len(PitchType)) for borderline_zone_i in range(len(BORDERLINE_ZONES))]
+                        for type_i in range(len(PitchType)) for borderline_zone_i in range(len(default.BORDERLINE_ZONES))]
         pitch_data = [Pitch(game_states[state_i], AtBat(None, None, batter, game_states[state_i]),
-                            0, BORDERLINE_ZONES[zone_i], PitchType(type_i), 0, PitchResult.HIT_SINGLE)
+                            0, default.BORDERLINE_ZONES[zone_i], PitchType(type_i), 0, PitchResult.HIT_SINGLE)
                       for state_i, type_i, zone_i in pitch_states]
 
         patience_dataset = PitchDataset(data_source=None, pitches=pitch_data, map_to=batter_patience_map)
@@ -244,7 +244,7 @@ def precalculate_transition_distribution(pitcher: Pitcher, batter: Batter,
                     # to be a measure of the batter's patience. This requires another nested loop
                     swing_probs = {o: float(batter_swung == o) for o in batter_actions}
 
-                    outcome_zone = ZONES[outcome_zone_i]
+                    outcome_zone = default.COMBINED_ZONES[outcome_zone_i]
                     if outcome_zone.is_borderline:
                         patience = batter_patience[state_i][pitch_type][outcome_zone_i]
                         swing_probs[True] = patience
@@ -373,6 +373,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+
     value = torch.load('value.pth')
     print(value[total_states_dict[AtBatState()]])

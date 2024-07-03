@@ -154,4 +154,4 @@ def train(epochs: int = 50, batch_size: int = 512, learning_rate: float = 0.001,
 if __name__ == '__main__':
     # Lower batch_size does not work as well on this model, possibly because of the high amount of
     # randomness in a batter's swing decision. Note, this did not quite converge in 50 epochs.
-    train(epochs=50, batch_size=512, learning_rate=0.0003)
+    train(epochs=40, batch_size=512, learning_rate=0.0003)

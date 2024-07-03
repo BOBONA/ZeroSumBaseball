@@ -13,7 +13,7 @@ from src.model.game import Game
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Batter, Pitcher
-from src.model.zones import get_zone, ZONES_DIMENSION
+from src.model.zones import Zones, default
 
 # This list was extracted from the raw csv. We ignore most at-bat events, however we are still interested
 # in differentiating between singles, doubles, triples, and home runs. In this case, PitchResult is used "incorrectly"
@@ -200,7 +200,7 @@ class BaseballData:
             pitches = csv.reader(f, delimiter=',')
 
             # Keep track of player statistics
-            pitch_statistics_shape = (len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
+            pitch_statistics_shape = (len(PitchType), Zones.DIMENSION, Zones.DIMENSION)
             pitcher_statistics = defaultdict(lambda: {
                 'total_thrown': torch.zeros(pitch_statistics_shape),
                 'total_velocity': torch.zeros(pitch_statistics_shape)
@@ -217,14 +217,18 @@ class BaseballData:
             # For now, we ignore most of the columns in the CSV
             next(pitches)
             for (pos_x, pos_z, start_speed, end_speed, spin_rate, spin_dir,
-                 _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+                 _, _, _, _, _, _, sz_bottom, sz_top, _, _, _, _, _, _, _, _, _, _, _, _, _,
                  pitch_result_code, _, pitch_type, _, batter_score, at_bat_id,
                  balls, strikes, outs, pitch_number, player_on_1b, on_2b, on_3b) in tqdm(pitches, desc='Loading pitch data'):
 
                 at_bat = self.at_bats.get(int(float(at_bat_id)), None)
                 loc = (None if not pos_x else 12 * float(pos_x),  # Convert from feet to inches
                        None if not pos_z else 12 * float(pos_z))
-                zone = get_zone(*loc)  # Is there a way to use the batch version of this function?
+
+                zones_bottom = 0 if sz_bottom == '' else float(sz_bottom)
+                zones = default if zones_bottom < 0.3 else Zones(sz_bottom=12 * zones_bottom, sz_top=12 * float(sz_top))
+                zone = zones.get_zone(*loc)
+
                 pitch_type = pitch_type_mapping.get(pitch_type, None)
                 pitch_result = pitch_result_mapping.get(pitch_result_code, None)
 

@@ -111,7 +111,7 @@ def get_swing_outcome_dataset(data: BaseballData) -> [PitchDataset, PitchDataset
     )
 
 
-def train(epochs: int = 30, batch_size: int = 64, learning_rate: float = 0.001,
+def train(epochs: int = 30, batch_size: int = 128, learning_rate: float = 0.0003,
           path: str = '../../model_weights/swing_outcome.pth'):
     data = BaseballData.load_with_cache()
     training_set, testing_set = get_swing_outcome_dataset(data)

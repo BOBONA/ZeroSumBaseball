@@ -4,12 +4,12 @@ import torch
 from torch.distributions import MultivariateNormal
 
 from src.model.pitch_type import PitchType
-from src.model.zones import ZONES_DIMENSION
+from src.model.zones import Zones
 
 
 class Batter:
     """
-    A Batter is represented as a 3D tensor of shape (2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION).
+    A Batter is represented as a 3D tensor of shape (2 * len(PitchType), Zones.DIMENSION, Zones.DIMENSION).
     Each pitch type/location combination has a corresponding relative swinging frequency and batting average.
 
     Attributes:
@@ -23,12 +23,12 @@ class Batter:
                  data: torch.Tensor = None):
         if data:
             assert (data.size(0) == 2 * len(PitchType) and
-                    data.size(1) == ZONES_DIMENSION and
-                    data.size(2) == ZONES_DIMENSION)
+                    data.size(1) == Zones.DIMENSION and
+                    data.size(2) == Zones.DIMENSION)
 
             self.data = data
         else:
-            self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
+            self.data = torch.zeros(2 * len(PitchType), Zones.DIMENSION, Zones.DIMENSION)
             # self.data[:len(PitchType), :, :] = 1 / len(PitchType)
 
         self.obp = obp
@@ -40,7 +40,7 @@ class Batter:
         Sets the swinging data for the batter. You can provide relative frequencies or provide total pitches for each type
         since the method normalizes the values.
 
-        :param data: The swinging frequency data, a 3D tensor of shape (len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION) to correspond to each pitch type.
+        :param data: The swinging frequency data, a 3D tensor of shape (len(PitchType), Zones.DIMENSION, Zones.DIMENSION) to correspond to each pitch type.
         """
 
         # Normalize the swinging frequencies
@@ -55,7 +55,7 @@ class Batter:
 
 class Pitcher:
     """
-    A Pitcher is represented as a 3D tensor of shape (2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION).
+    A Pitcher is represented as a 3D tensor of shape (2 * len(PitchType), Zones.DIMENSION, Zones.DIMENSION).
     Each pitch type/location combination has a corresponding relative throwing frequency and average velocity.
     Note that for now this tensor is structurally identical to a batter's.
 
@@ -73,14 +73,14 @@ class Pitcher:
                  data: torch.Tensor = None):
         if data:
             assert (data.size(0) == 2 * len(PitchType) and
-                    data.size(1) == ZONES_DIMENSION and
-                    data.size(2) == ZONES_DIMENSION)
+                    data.size(1) == Zones.DIMENSION and
+                    data.size(2) == Zones.DIMENSION)
 
             # Normalize the throwing frequencies
             data[:len(PitchType), :, :] /= data[:len(PitchType), :, :].sum(dim=0, keepdim=True)
             self.data = data
         else:
-            self.data = torch.zeros(2 * len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
+            self.data = torch.zeros(2 * len(PitchType), Zones.DIMENSION, Zones.DIMENSION)
             # self.data[:len(PitchType), :, :] = 1 / len(PitchType)
 
         self.obp = obp
@@ -93,7 +93,7 @@ class Pitcher:
         Sets the throwing data for the pitcher. You can provide relative frequencies or provide total pitches for each type
         since the method normalizes the values.
 
-        :param data: The throwing frequency data, a 3D tensor of shape (len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION) to correspond to each pitch type. The tensor is normalized to sum to 1 along the pitch type dimension.
+        :param data: The throwing frequency data, a 3D tensor of shape (len(PitchType), Zones.DIMENSION, Zones.DIMENSION) to correspond to each pitch type. The tensor is normalized to sum to 1 along the pitch type dimension.
         """
 
         # Normalize the throwing frequencies

@@ -2,7 +2,7 @@ import torch
 
 from src.model.at_bat import AtBat, AtBatState, PitchResult
 from src.model.pitch_type import PitchType
-from src.model.zones import ZONES_DIMENSION, Zone
+from src.model.zones import Zone, Zones
 
 
 class Pitch:
@@ -42,7 +42,7 @@ class Pitch:
 
     @classmethod
     def get_encoding(cls, pitch_type: PitchType, location: Zone):
-        one_hot = torch.zeros(len(PitchType), ZONES_DIMENSION, ZONES_DIMENSION)
+        one_hot = torch.zeros(len(PitchType), Zones.DIMENSION, Zones.DIMENSION)
         for x, y in location.coords:
             one_hot[pitch_type.value, x, y] = 1
         return one_hot

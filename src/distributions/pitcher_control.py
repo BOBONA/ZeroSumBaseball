@@ -61,7 +61,7 @@ def get_pitch_control_sets(data: BaseballData) -> (PitchControlDataset, PitchCon
     return PitchControlDataset.get_random_split(data, 0.3, seed=1)
 
 
-def train(epochs: int = 10, batch_size: int = 8, learning_rate: float = 0.001,
+def train(epochs: int = 400, batch_size: int = 5, learning_rate: float = 0.0001,
           path: str = '../../model_weights/pitcher_control.pth'):
     data = BaseballData.load_with_cache()
 
@@ -78,7 +78,7 @@ def train(epochs: int = 10, batch_size: int = 8, learning_rate: float = 0.001,
         model.load_state_dict(torch.load(path))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.3)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=150, gamma=0.3)
     criterion = nn.MSELoss()
 
     loader_length = len(training_dataloader)
@@ -119,4 +119,4 @@ def train(epochs: int = 10, batch_size: int = 8, learning_rate: float = 0.001,
 
 
 if __name__ == '__main__':
-    train(batch_size=5, epochs=40, learning_rate=0.001)
+    train(batch_size=5, epochs=400, learning_rate=0.0001)
