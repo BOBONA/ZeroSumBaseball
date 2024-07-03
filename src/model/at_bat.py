@@ -132,7 +132,7 @@ class AtBatState:
 
     def __hash__(self):
         if self.precomputed_hash is None:
-            self.precomputed_hash = hash((self.balls, self.strikes, self.num_runs, self.num_outs, self.first, self.second, self.third))
+            self.precomputed_hash = hash((self.balls, self.strikes, self.num_outs, self.first, self.second, self.third))
         return self.precomputed_hash
 
     def __eq__(self, other):
