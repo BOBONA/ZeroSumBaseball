@@ -60,7 +60,8 @@ class PolicySolver:
         :param batter:
         """
 
-        assert default.COMBINED_ZONES[0] == default.BORDERLINE_ZONES[0]  # BatterPatienceDistribution indexing relies on this
+        # BatterPatienceDistribution indexing relies on COMBINED_ZONES = ZONES + BORDERLINE_ZONES in that order
+        assert default.COMBINED_ZONES[len(default.ZONES)] == default.BORDERLINE_ZONES[0]
 
         self.pitcher = pitcher
         self.batter = batter
@@ -138,7 +139,7 @@ class PolicySolver:
 
                         outcome_zone = default.COMBINED_ZONES[outcome_zone_i]
                         if outcome_zone.is_borderline:
-                            patience = batter_patience[state_i][pitch_type][outcome_zone_i]
+                            patience = batter_patience[state_i][pitch_type][outcome_zone_i - len(default.ZONES)]
                             swing_probs[True] = patience
                             swing_probs[False] = 1 - patience
 
@@ -312,7 +313,7 @@ class PolicySolver:
         return 0, 0
 
     def calculate_optimal_policy(self, print_difference: bool = False, use_ordered_iteration: bool = True,
-                                 beta: float = 1e-5) -> tuple[Policy, list[float]]:
+                                 beta: float = 1e-3) -> tuple[Policy, list[float]]:
         """
         Uses value iteration algorithm to calculate the optimal policy for our model, given
         the pitcher and batter. https://doi.org/10.1016/B978-1-55860-335-6.50027-1
@@ -423,9 +424,11 @@ def main(debug: bool = False):
         pitcher = list(bd.pitchers.values())[90]  # obp_percentile = 0.94
         batter = list(bd.batters.values())[513]  # obp_percentile = 0.54
 
+        print(f'Pitcher OBP: {pitcher.obp_percentile}, Batter OBP: {batter.obp_percentile}')
+
         solver = PolicySolver(pitcher, batter)
         solver.initialize_distributions()
-        solver.calculate_optimal_policy()
+        solver.calculate_optimal_policy(print_difference=True)
 
         print(f'ERA {solver.get_value()}')
 

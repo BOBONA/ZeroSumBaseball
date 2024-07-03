@@ -89,7 +89,7 @@ class Zones:
         for zone in self.BORDERLINE_ZONES:
             zone.is_borderline = True
 
-        self.COMBINED_ZONES = self.BORDERLINE_ZONES + self.ZONES
+        self.COMBINED_ZONES = self.ZONES + self.BORDERLINE_ZONES
 
         self.STRIKE_ZONE_WIDTH = width
         self.STRIKE_ZONE_HEIGHT = sz_top - sz_bottom
