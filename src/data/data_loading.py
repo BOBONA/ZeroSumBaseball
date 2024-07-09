@@ -1,8 +1,9 @@
 import csv
 import os.path
+import pickle
 from collections import defaultdict
-from typing import Self
 
+import blosc2
 import torch
 from torch import nan_to_num, Tensor
 from torch.distributions import MultivariateNormal
@@ -14,6 +15,19 @@ from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Batter, Pitcher
 from src.model.zones import Zones, default
+
+
+def load_blosc2(path: str):
+    with open(path, 'rb') as f:
+        return pickle.loads(blosc2.decompress(f.read()))
+
+
+def save_blosc2(data, path: str):
+    if not os.path.exists(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+
+    with open(path, 'wb') as f:
+        f.write(blosc2.compress(pickle.dumps(data)))
 
 
 class BaseballData:
@@ -30,41 +44,38 @@ class BaseballData:
     See https://www.kaggle.com/datasets/pschale/mlb-pitch-data-20152018/
     """
 
-    PLAYER_NAMES = 'player_names.csv'
-    GAMES = 'games.csv'
+    default_processed_data_dir = '../../processed_data/'
+
     AT_BATS = 'atbats.csv'
     PITCHES = 'pitches.csv'
-    EJECTIONS = 'ejections.csv'
+
+    def __init__(self, load_pitches: bool = True, load_players: bool = True,
+                 processed_data_dir: str = default_processed_data_dir):
+        self.pitches = None
+        self.players = None
+
+        if load_pitches:
+            self.pitches = load_blosc2(processed_data_dir + 'all_pitches.blosc2')
+
+        if load_players:
+            players = load_blosc2(processed_data_dir + 'players.blosc2')
+            self.pitchers: defaultdict[int, Pitcher] = players['pitchers']
+            self.batters: defaultdict[int, Batter] = players['batters']
 
     @classmethod
-    def load_with_cache(cls, processed_data: str = '../../processed_data/baseball_data.pth', raw_data_dir: str = '../../raw_data/kaggle/') -> Self:
-        """Cache the processed data if it doesn't exist, or load it"""
-
-        print('Loading baseball data from cache... ', end='')
-
-        if os.path.isfile(processed_data):
-            cached_data = torch.load(processed_data)
-            print('done')
-            return cached_data
-        else:
-            data = cls(raw_data_dir=raw_data_dir)
-            torch.save(data, processed_data)
-            return data
-
-    def __init__(self, raw_data_dir: str = '../../raw_data/kaggle/'):
+    def process_data(cls, raw_data_dir: str = '../../raw_data/kaggle/', processed_data_dir: str = default_processed_data_dir):
         """
         Load raw baseball data from the specified directory.
-        :param raw_data_dir: The directory containing the raw baseball data.
         """
 
         print('Generating baseball data (this will only happen once)...')
 
         at_bat_data: dict[int, tuple[int, int, int, PitchResult]] = {}
-        self.pitchers: defaultdict[int, Pitcher] = defaultdict(Pitcher)
-        self.batters: defaultdict[int, Batter] = defaultdict(Batter)
+        pitchers: defaultdict[int, Pitcher] = defaultdict(Pitcher)
+        batters: defaultdict[int, Batter] = defaultdict(Batter)
 
         # Load at-bat data
-        with open(raw_data_dir + self.AT_BATS) as f:
+        with open(raw_data_dir + cls.AT_BATS) as f:
             at_bats = csv.reader(f, delimiter=',')
 
             batter_obp = defaultdict(lambda: (0, 0))  # Tracks the number of plate appearances and hits for each batter
@@ -90,18 +101,18 @@ class BaseballData:
             batter_obp_list = sorted([(batter_id, hits / pa) for batter_id, (pa, hits) in batter_obp.items()], key=lambda x: x[1])
             pitcher_obp_list = sorted([(pitcher_id, hits / bf) for pitcher_id, (bf, hits) in pitcher_obp.items()], key=lambda x: x[1], reverse=True)
             for idx, (player_id, obp) in enumerate(batter_obp_list):
-                self.batters[player_id].obp = obp
-                self.batters[player_id].obp_percentile = idx / len(batter_obp_list)
-                self.batters[player_id].num_at_bats = batter_obp[player_id][0]
+                batters[player_id].obp = obp
+                batters[player_id].obp_percentile = idx / len(batter_obp_list)
+                batters[player_id].num_at_bats = batter_obp[player_id][0]
             for idx, (player_id, obp) in enumerate(pitcher_obp_list):
-                self.pitchers[player_id].obp = obp
-                self.pitchers[player_id].obp_percentile = idx / len(pitcher_obp_list)
-                self.pitchers[player_id].num_batters_faced = pitcher_obp[player_id][0]
+                pitchers[player_id].obp = obp
+                pitchers[player_id].obp_percentile = idx / len(pitcher_obp_list)
+                pitchers[player_id].num_batters_faced = pitcher_obp[player_id][0]
 
-        self.pitches: list[Pitch] = []
+        all_pitches: list[Pitch] = []
 
         # Load individual pitch data
-        with (open(raw_data_dir + self.PITCHES) as f):
+        with (open(raw_data_dir + cls.PITCHES) as f):
             pitches = csv.reader(f, delimiter=',')
 
             # Keep track of player statistics
@@ -153,7 +164,7 @@ class BaseballData:
                               pitch_num=int(float(pitch_number)))
 
                 # Update the pitch entry
-                self.pitches.append(pitch)
+                all_pitches.append(pitch)
 
                 # Update player statistics
                 if pitch.is_valid():
@@ -182,7 +193,7 @@ class BaseballData:
 
             # Aggregate pitcher statistics
             for pitcher_id, stats in pitcher_statistics.items():
-                pitcher = self.pitchers[pitcher_id]
+                pitcher = pitchers[pitcher_id]
                 pitcher.set_throwing_frequency_data(stats['total_thrown'])
 
                 avg_velocity = stats['total_velocity'] / stats['total_thrown']
@@ -199,18 +210,26 @@ class BaseballData:
                         mean = torch.mean(locations_tensor, dim=0)
                         covar = torch.cov(locations_tensor.T) + jitter
                         try:
-                            self.pitchers[pitcher_id].estimated_control[pitch_type] = MultivariateNormal(mean, covar)
+                            pitchers[pitcher_id].estimated_control[pitch_type] = MultivariateNormal(mean, covar)
                         except ValueError:  # If the covariance matrix is not positive definite
                             pass
 
             # Aggregate batter statistics
             for batter_id, stats in batter_statistics.items():
-                batter = self.batters[batter_id]
+                batter = batters[batter_id]
                 batter.set_swinging_frequency_data(nan_to_num(stats['total_swung']))
                 batter.set_batting_average_data(nan_to_num(stats['total_hits'] / stats['total_encountered']))
+
+        players = {
+            'pitchers': pitchers,
+            'batters': batters
+        }
+
+        save_blosc2(all_pitches, processed_data_dir + 'all_pitches.blosc2')
+        save_blosc2(players, processed_data_dir + 'players.blosc2')
 
         print('Done')
 
 
 if __name__ == '__main__':
-    BaseballData.load_with_cache()
+    BaseballData.process_data()

@@ -68,31 +68,44 @@ class SwingResult(IntEnum):
 
 class PitchDataset(Dataset):
     """
-    A versatile pitch dataset, wrapping the BaseballData source. Many options are available
-    for filtering, mapping, and unique identification of pitches. This way new datasets
-    do not need to be created for each use case.
+    A versatile pitch dataset, wrapping the BaseballData source. Options are available
+    for filtering and mapping.
     """
 
     def __init__(self, data_source: BaseballData | None, valid_only: bool = True,
                  filter_on: Callable[[Pitch], bool] | None = None,
                  map_to: Callable[[int, Pitch], any] | None = None,
-                 pitches: list[Pitch] | None = None):
+                 map_lazy: bool = True,
+                 pitches: list[Pitch] | None = None, indices: list[int] | None = None):
         """
         :param data_source: The data source for the dataset
+        :param valid_only: Whether to only include valid pitches
         :param filter_on: A function that filters the pitches
         :param map_to: A function that maps the pitches to a different type
+        :param map_lazy: Whether to map the pitches lazily
         :param pitches: A list of pitches to use instead of the data source
+        :param indices: A list of indices to use as an ordered subset of the data source
         """
 
-        pitch_objects = pitches if pitches is not None else data_source.pitches
-        self.pitches = [pitch for pitch in pitch_objects if (not valid_only or pitch.is_valid()) and (filter_on is None or filter_on(pitch))]
-        self.data = [map_to(idx, pitch) if map_to is not None else pitch for idx, pitch in enumerate(self.pitches)]
+        self.data_source = pitches if pitches is not None else data_source.pitches
+        if indices is None:
+            self.indices = [idx for idx, pitch in enumerate(self.data_source) if (not valid_only or pitch.is_valid()) and (filter_on is None or filter_on(pitch))]
+        else:
+            self.indices = [idx for idx in indices if (not valid_only or self.data_source[idx].is_valid()) and (filter_on is None or filter_on(self.data_source[idx]))]
+        self.map_to = map_to
+
+        if not map_lazy and map_to is not None:
+            self.data = [map_to(idx, self.data_source[idx]) for idx in self.indices]
 
     def __len__(self):
-        return len(self.data)
+        return len(self.indices)
 
     def __getitem__(self, idx) -> any:
-        return self.data[idx]
+        if hasattr(self, 'data'):
+            return self.data[idx]
+        else:
+            return (self.map_to(self.indices[idx], self.data_source[self.indices[idx]]) if self.map_to is not None
+                    else self.data_source[self.indices[idx]])
 
     @classmethod
     def get_split_on_attribute(cls, data_source: BaseballData | None, val_split: float = 0.2,
@@ -100,29 +113,30 @@ class PitchDataset(Dataset):
                                valid_only: bool = True,
                                filter_on: Callable[[Pitch], bool] | None = None,
                                map_to: Callable[[int, Pitch], any] | None = None,
+                               map_lazy: bool = True,
                                seed: int | None = None) -> tuple[Self, Self]:
         """
         Splits the data into training and validation sets, with an option to split on a custom attribute.
         Note that the split is not guaranteed to be perfect across the attribute.
         """
 
-        pitches = data_source.pitches
+        indices = list(range(len(data_source.pitches)))
         random.seed(seed)
-        random.shuffle(pitches)
+        random.shuffle(indices)
 
         # Group by attribute
         if attribute is not None:
             attribute_map = defaultdict(list)
-            for pitch in pitches:
-                attribute_map[attribute(pitch)].append(pitch)
-            pitches = [pitch for pitches in attribute_map.values() for pitch in pitches]
+            for idx in indices:
+                attribute_map[attribute(data_source.pitches[idx])].append(idx)
+            indices = [idx for group in attribute_map.values() for idx in group]
 
-        split_idx = int(len(pitches) * (1 - val_split))
-        train_pitches = pitches[:split_idx]
-        val_pitches = pitches[split_idx:]
+        split_idx = int(len(indices) * (1 - val_split))
+        train_indices = indices[:split_idx]
+        val_indices = indices[split_idx:]
 
-        return (cls(data_source, valid_only, filter_on, map_to, train_pitches),
-                cls(data_source, valid_only, filter_on, map_to, val_pitches))
+        return (cls(data_source, valid_only, filter_on, map_to, map_lazy, indices=train_indices),
+                cls(data_source, valid_only, filter_on, map_to, map_lazy, indices=val_indices))
 
 
 class PitchControlDataset(Dataset):
