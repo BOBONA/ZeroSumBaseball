@@ -31,3 +31,19 @@ the batter's intentions, which seems difficult.
 - The pitch types simplify on the data given, where perhaps more of the numeric information could be of use. 
 
 - In predicting swing results, we do not differentiate between the batter directly getting out and outs on the field.
+
+## TODO
+- Finish retraining the models with the Statcast data
+  - There seems to be a training problem right now when I'm retraining SwingOutcome
+
+- Test strategies for optimizing batter selection
+
+  - Fix one at a time
+  - (Stochastic) hill climbing
+  - Simulated annealing?
+
+- Double check which optimizer cvxpy is using
+
+- Incorporate a distribution for on-field outcomes. We can start with the empirical distribution
+
+- How am I supposed to even evaluate a given batter order?

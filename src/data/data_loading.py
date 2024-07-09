@@ -8,86 +8,12 @@ from torch import nan_to_num, Tensor
 from torch.distributions import MultivariateNormal
 from tqdm import tqdm
 
-from src.model.at_bat import AtBat, AtBatState, PitchResult
-from src.model.game import Game
+from src.data.code_mappings_old import old_at_bat_event_mapping, old_pitch_type_mapping, old_pitch_result_mapping
+from src.model.at_bat import AtBatState, PitchResult
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Batter, Pitcher
 from src.model.zones import Zones, default
-
-# This list was extracted from the raw csv. We ignore most at-bat events, however we are still interested
-# in differentiating between singles, doubles, triples, and home runs. In this case, PitchResult is used "incorrectly"
-at_bat_event_mapping = {
-    'Double': PitchResult.HIT_DOUBLE,
-    'Single': PitchResult.HIT_SINGLE,
-    'Triple': PitchResult.HIT_TRIPLE,
-    'Home Run': PitchResult.HIT_HOME_RUN,
-    # Groundout
-    # Strikeout
-    # Strikeout
-    'Walk': PitchResult.HIT_SINGLE,
-    # Runner Out
-    # Flyout
-    # Forceout
-    # Pop Out
-    'Intent Walk': PitchResult.HIT_SINGLE,
-    # Lineout
-    'Hit By Pitch': PitchResult.HIT_SINGLE,
-    # Grounded Into DP
-    # Sac Bunt
-    # Fielders Choice
-    # Bunt Groundout
-    'Field Error': PitchResult.HIT_SINGLE,
-    # Double Play
-    # Sac Fly
-    # Fielders Choice Out
-    # Bunt Pop Out
-    'Catcher Interference': PitchResult.HIT_SINGLE,
-    # Strikeout - DP
-    # Batter Interference
-    # Sac Fly DP
-    # Bunt Lineout
-    # Sacrifice Bunt DP
-    # Triple Play
-}
-
-pitch_type_mapping = {
-    'CH': PitchType.CHANGEUP,
-    'CU': PitchType.CURVE,
-    'EP': PitchType.CURVE,  # Eephus is a type of slow curveball
-    'FC': PitchType.CUTTER,
-    'FF': PitchType.FOUR_SEAM,
-    'FO': None,  # Pitchout doesn't fit in the given categories
-    'FS': PitchType.CHANGEUP,  # Splitter is often considered a type of changeup
-    'FT': PitchType.TWO_SEAM,
-    'IN': None,  # Intentional ball doesn't fit in the given categories
-    'KC': PitchType.CURVE,
-    'KN': PitchType.CURVE,  # Knuckleball is distinct but closer to a curve in action
-    'PO': None,  # Pitchout doesn't fit in the given categories
-    'SC': PitchType.CHANGEUP,  # Screwball acts like a changeup with reverse break
-    'SI': PitchType.TWO_SEAM,
-    'SL': PitchType.SLIDER,
-    'UN': None,  # Unknown types cannot be classified
-}
-
-pitch_result_mapping = {
-    'B': PitchResult.CALLED_BALL,  # Ball
-    '*B': PitchResult.CALLED_BALL,  # Ball in dirt
-    'I': PitchResult.CALLED_BALL,  # Intentional ball
-    'P': PitchResult.CALLED_BALL,  # Pitchout
-    'C': PitchResult.CALLED_STRIKE,  # Called strike
-    'S': PitchResult.SWINGING_STRIKE,  # Swinging strike
-    'W': PitchResult.SWINGING_STRIKE,  # Swinging strike (blocked)
-    'Q': PitchResult.SWINGING_STRIKE,  # Swinging pitchout
-    'T': PitchResult.SWINGING_STRIKE,  # Foul tip
-    'L': PitchResult.SWINGING_STRIKE,  # Foul bunt
-    'F': PitchResult.SWINGING_FOUL,  # Regular foul
-    'R': PitchResult.SWINGING_FOUL,  # Foul pitchout
-    'D': PitchResult.HIT_SINGLE,  # Hit
-    'E': PitchResult.HIT_SINGLE,  # Hit, with runs scored
-    'H': PitchResult.HIT_SINGLE,  # Hit by pitch, perhaps should be a separate category
-    'X': PitchResult.HIT_OUT,  # In play, out(s)
-}
 
 
 class BaseballData:
@@ -111,7 +37,7 @@ class BaseballData:
     EJECTIONS = 'ejections.csv'
 
     @classmethod
-    def load_with_cache(cls, processed_data: str = '../../processed_data/baseball_data.pth', raw_data_dir: str = '../../raw_data/') -> Self:
+    def load_with_cache(cls, processed_data: str = '../../processed_data/baseball_data.pth', raw_data_dir: str = '../../raw_data/kaggle/') -> Self:
         """Cache the processed data if it doesn't exist, or load it"""
 
         print('Loading baseball data from cache... ', end='')
@@ -125,7 +51,7 @@ class BaseballData:
             torch.save(data, processed_data)
             return data
 
-    def __init__(self, raw_data_dir: str = '../../raw_data/'):
+    def __init__(self, raw_data_dir: str = '../../raw_data/kaggle/'):
         """
         Load raw baseball data from the specified directory.
         :param raw_data_dir: The directory containing the raw baseball data.
@@ -133,27 +59,9 @@ class BaseballData:
 
         print('Generating baseball data (this will only happen once)...')
 
-        self.player_names: dict[int, str] = {}
-        self.games: dict[int, Game] = {}
-        self.at_bats: dict[int, AtBat] = {}
+        at_bat_data: dict[int, tuple[int, int, int, PitchResult]] = {}
         self.pitchers: defaultdict[int, Pitcher] = defaultdict(Pitcher)
         self.batters: defaultdict[int, Batter] = defaultdict(Batter)
-        self.pitches: list[Pitch] = []
-
-        # Load player names
-        with open(raw_data_dir + self.PLAYER_NAMES) as f:
-            player_names = csv.reader(f, delimiter=',')
-            next(player_names)  # Skip the header
-            for person_id, first_name, last_name in tqdm(player_names, desc='Loading player names'):
-                self.player_names[int(person_id)] = f'{first_name} {last_name}'
-
-        # Load game data
-        with open(raw_data_dir + self.GAMES) as f:
-            games = csv.reader(f, delimiter=',')
-            next(games)
-            for (_, away_score, _, _, _, game_id, home_score,
-                 _, _, _, _, _, _, _, weather, wind, _) in tqdm(games, desc='Loading game data'):
-                self.games[int(game_id)] = Game(int(home_score), int(away_score))
 
         # Load at-bat data
         with open(raw_data_dir + self.AT_BATS) as f:
@@ -165,18 +73,13 @@ class BaseballData:
             next(at_bats)
             for (at_bat_id, batter_id, event, game_id, inning, outs, pitcher_team_score,
                  pitcher_hand, pitcher_id, batter_side, top_inning) in tqdm(at_bats, desc='Loading at-bat data'):
-
                 at_bat_id = int(at_bat_id)
                 batter_id = int(batter_id)
                 pitcher_id = int(pitcher_id)
                 game_id = int(game_id)
 
-                pitch_result = at_bat_event_mapping.get(event, None)
-                outcome_state = AtBatState(balls=None, strikes=None, outs=int(outs), outcome_event=pitch_result)
-
-                self.at_bats[at_bat_id] = AtBat(self.games.get(game_id, None), self.pitchers[pitcher_id],
-                                                self.batters[batter_id], outcome_state=outcome_state,
-                                                ab_id=at_bat_id)
+                pitch_result = old_at_bat_event_mapping.get(event, None)
+                at_bat_data[at_bat_id] = (game_id, pitcher_id, batter_id, pitch_result)
 
                 # Update the OBP statistics
                 add_hit = pitch_result is not None
@@ -194,6 +97,8 @@ class BaseballData:
                 self.pitchers[player_id].obp = obp
                 self.pitchers[player_id].obp_percentile = idx / len(pitcher_obp_list)
                 self.pitchers[player_id].num_batters_faced = pitcher_obp[player_id][0]
+
+        self.pitches: list[Pitch] = []
 
         # Load individual pitch data
         with (open(raw_data_dir + self.PITCHES) as f):
@@ -221,57 +126,63 @@ class BaseballData:
                  pitch_result_code, _, pitch_type, _, batter_score, at_bat_id,
                  balls, strikes, outs, pitch_number, player_on_1b, on_2b, on_3b) in tqdm(pitches, desc='Loading pitch data'):
 
-                at_bat = self.at_bats.get(int(float(at_bat_id)), None)
+                game_id, pitcher_id, batter_id, ab_pitch_result = at_bat_data.get(int(float(at_bat_id)))
+
+                state = AtBatState(balls=int(float(balls)), strikes=int(float(strikes)), runs=int(float(batter_score)),
+                                   outs=int(float(outs)), first=bool(int(float(player_on_1b))),
+                                   second=bool(int(float(on_2b))), third=bool(int(float(on_3b))))
+
                 loc = (None if not pos_x else 12 * float(pos_x),  # Convert from feet to inches
                        None if not pos_z else 12 * float(pos_z))
 
-                zones_bottom = 0 if sz_bottom == '' else float(sz_bottom)
-                zones = default if zones_bottom < 0.3 else Zones(sz_bottom=12 * zones_bottom, sz_top=12 * float(sz_top))
-                zone = zones.get_zone(*loc)
+                if loc[0] is not None and loc[1] is not None:
+                    zones_bottom = 0 if sz_bottom == '' else float(sz_bottom)
+                    zones = default if zones_bottom < 0.3 else Zones(sz_bottom=12 * zones_bottom, sz_top=12 * float(sz_top))
+                    zone_idx, zone = zones.get_zone(*loc)
 
-                pitch_type = pitch_type_mapping.get(pitch_type, None)
-                pitch_result = pitch_result_mapping.get(pitch_result_code, None)
+                pitch_type = old_pitch_type_mapping.get(pitch_type, None)
+                pitch_result = old_pitch_result_mapping.get(pitch_result_code, None)
 
                 if pitch_result == PitchResult.HIT_SINGLE:
-                    pitch_result = at_bat.state.outcome_event  # The more fine-grained event is stored in the at-bat
+                    pitch_result = ab_pitch_result  # The more fine-grained event is stored in the at-bat
 
-                pitch = Pitch(AtBatState(balls=int(float(balls)), strikes=int(float(strikes)),
-                                         runs=int(float(batter_score)), outs=int(float(outs)),
-                                         first=bool(int(float(player_on_1b))), second=bool(int(float(on_2b))), third=bool(int(float(on_3b)))),
-                              at_bat, pitch_number=int(float(pitch_number)), location=zone, pitch_type=pitch_type,
-                              speed=start_speed, pitch_result=pitch_result)
+                pitch = Pitch(at_bat_state=state, batter_id=batter_id, pitcher_id=pitcher_id,
+                              pitch_type=pitch_type, location=zone_idx, pitch_result=pitch_result,
+                              speed=None if not start_speed else float(start_speed), plate_x=loc[0], plate_z=loc[1],
+                              game_id=game_id, at_bat_num=at_bat_id,
+                              pitch_num=int(float(pitch_number)))
 
                 # Update the pitch entry
                 self.pitches.append(pitch)
-                at_bat.pitches.append(pitch)
 
                 # Update player statistics
-                if at_bat is not None and pitch.is_valid():
+                if pitch.is_valid():
                     def increment_statistic(statistic: Tensor, amount: float = 1):
                         for x, y in zone.coords:
                             statistic[pitch_type, x, y] += amount
 
                     # Pitcher
-                    increment_statistic(pitcher_statistics[at_bat.pitcher]['total_thrown'])
-                    increment_statistic(pitcher_statistics[at_bat.pitcher]['total_velocity'], float(start_speed))
+                    increment_statistic(pitcher_statistics[pitcher_id]['total_thrown'])
+                    increment_statistic(pitcher_statistics[pitcher_id]['total_velocity'], float(start_speed))
                     velocities.append(float(start_speed))
 
                     if pitch.at_bat_state.balls == 3 and pitch.at_bat_state.strikes == 0:
-                        pitch_locations_30[at_bat.pitcher][pitch.type].append(loc)
+                        pitch_locations_30[pitcher_id][pitch.type].append(loc)
 
                     # Batter
-                    increment_statistic(batter_statistics[at_bat.batter]['total_encountered'])
+                    increment_statistic(batter_statistics[batter_id]['total_encountered'])
                     if pitch.result.batter_swung():
-                        increment_statistic(batter_statistics[at_bat.batter]['total_swung'])
+                        increment_statistic(batter_statistics[batter_id]['total_swung'])
                     if pitch.result.batter_hit():
-                        increment_statistic(batter_statistics[at_bat.batter]['total_hits'])
+                        increment_statistic(batter_statistics[batter_id]['total_hits'])
 
             # Add the aggregate statistics to the players, replacing blank statistics with zeros
             velocity_mean = torch.mean(torch.tensor(velocities))
             velocity_std = torch.std(torch.tensor(velocities))
 
             # Aggregate pitcher statistics
-            for pitcher, stats in pitcher_statistics.items():
+            for pitcher_id, stats in pitcher_statistics.items():
+                pitcher = self.pitchers[pitcher_id]
                 pitcher.set_throwing_frequency_data(stats['total_thrown'])
 
                 avg_velocity = stats['total_velocity'] / stats['total_thrown']
@@ -281,19 +192,20 @@ class BaseballData:
 
             # Pitch control distributions
             jitter = torch.eye(2) * 1e-5  # Helps with positive definiteness
-            for pitcher, pitch_counts in pitch_locations_30.items():
+            for pitcher_id, pitch_counts in pitch_locations_30.items():
                 for pitch_type, locations in pitch_counts.items():
                     if len(locations) > 5:
                         locations_tensor = torch.tensor(locations, dtype=torch.float32)
                         mean = torch.mean(locations_tensor, dim=0)
                         covar = torch.cov(locations_tensor.T) + jitter
                         try:
-                            pitcher.estimated_control[pitch_type] = MultivariateNormal(mean, covar)
+                            self.pitchers[pitcher_id].estimated_control[pitch_type] = MultivariateNormal(mean, covar)
                         except ValueError:  # If the covariance matrix is not positive definite
                             pass
 
             # Aggregate batter statistics
-            for batter, stats in batter_statistics.items():
+            for batter_id, stats in batter_statistics.items():
+                batter = self.batters[batter_id]
                 batter.set_swinging_frequency_data(nan_to_num(stats['total_swung']))
                 batter.set_batting_average_data(nan_to_num(stats['total_hits'] / stats['total_encountered']))
 

@@ -1,9 +1,6 @@
 from enum import IntEnum
 from typing import Self
 
-from src.model.game import Game
-from src.model.players import Pitcher, Batter
-
 
 class PitchResult(IntEnum):
     """An enum representing the possible results of a pitch, used to transition the state."""
@@ -21,13 +18,13 @@ class PitchResult(IntEnum):
     HIT_OUT = 8
 
     def batter_swung(self):
-        """Returns whether the batter swung at the pitch."""
+        """Returns whether the batter swung at the pitch (or if he was hit by the pitch)."""
 
         return (self == PitchResult.SWINGING_STRIKE or self == PitchResult.SWINGING_FOUL or self == PitchResult.HIT_OUT or
                 self.batter_hit())
 
     def batter_hit(self):
-        """Returns whether the batter hit the pitch."""
+        """Returns whether the batter hit the pitch (or was hit by the pitch)."""
 
         return (self == PitchResult.HIT_SINGLE or self == PitchResult.HIT_DOUBLE or self == PitchResult.HIT_TRIPLE or
                 self == PitchResult.HIT_HOME_RUN)
@@ -38,16 +35,15 @@ class AtBatState:
     Represents the changing state of an at-bat. This is also used to represent the outcome of an at-bat,
     which is made up of the number of outs and the outcome event (if applicable).
 
-    Note that outcome_event is a PitchResult, but that this is only used to represent whether the at-bat ended
-    on base, and if so, which base the batter reached. This is not a proper usage of the PitchResult enum.
-
     Also, note that num_runs is not currently used in computing the optimal policy, although limiting it
     does have a small effect, it also increases the number of states significantly.
     """
 
+    __slots__ = ['balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'precomputed_hash']
+
     max_runs = 9
 
-    def __init__(self, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, outcome_event: PitchResult | None = None):
+    def __init__(self, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False):
         self.balls = balls
         self.strikes = strikes
 
@@ -57,8 +53,6 @@ class AtBatState:
         self.first = first
         self.second = second
         self.third = third
-
-        self.outcome_event = outcome_event  # The outcome pitch result
 
         self.precomputed_hash = None
 
@@ -137,15 +131,3 @@ class AtBatState:
 
     def __eq__(self, other):
         return hash(self) == hash(other)
-
-
-class AtBat:
-    """Represents a full at-bat event"""
-
-    def __init__(self, game: Game | None, pitcher: Pitcher | None, batter: Batter, outcome_state: AtBatState, ab_id: int | None = None):
-        self.game = game
-        self.pitcher = pitcher
-        self.batter = batter
-        self.state = outcome_state
-        self.id = ab_id
-        self.pitches = []
