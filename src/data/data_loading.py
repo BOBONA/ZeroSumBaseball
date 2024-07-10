@@ -9,7 +9,13 @@ import torch
 from pandas import DataFrame
 from torch import nan_to_num, Tensor
 from torch.distributions import MultivariateNormal
-from tqdm import tqdm
+
+try:
+    # noinspection PyUnresolvedReferences
+    ipython_name = get_ipython().__class__.__name__
+    from tqdm.notebook import tqdm
+except NameError:
+    from tqdm import tqdm
 
 from src.data.code_mappings import pitch_type_mapping, pitch_result_mapping, at_bat_event_mapping
 from src.model.at_bat import AtBatState, PitchResult
@@ -30,6 +36,16 @@ def save_blosc2(data, path: str):
 
     with open(path, 'wb') as f:
         f.write(blosc2.compress(pickle.dumps(data)))
+
+
+def fill_partial_stat(stat: Tensor):
+    """Utility function"""
+
+    for zone in default.ZONES:
+        if zone.coords > 1:
+            for coord in zone.coords[1:]:
+                stat[:, *coord] = stat[:, *zone.coords[0]]
+    return stat
 
 
 class BaseballData:
@@ -55,7 +71,7 @@ class BaseballData:
 
         if load_pitches:
             self.pitches = []
-            for year in range(2015, 2019):
+            for year in tqdm(range(2008, 2024)):
                 self.pitches.extend(load_blosc2(processed_data_dir + f'{year}.blosc2'))
 
         if load_players:
@@ -77,27 +93,21 @@ class BaseballData:
 
         pitcher_all_at_bats = defaultdict(set)
         pitcher_hits_against = defaultdict(int)
-
         pitch_statistics_shape = (len(PitchType), Zones.DIMENSION, Zones.DIMENSION)
-        pitcher_statistics = defaultdict(lambda: {
-            'total_thrown': torch.zeros(pitch_statistics_shape),
-            'total_velocity': torch.zeros(pitch_statistics_shape)
-        })
+        pitcher_total_thrown = defaultdict(lambda: torch.zeros(pitch_statistics_shape))
+        pitcher_total_velocity = defaultdict(lambda: torch.zeros(pitch_statistics_shape))
         pitch_locations_30 = defaultdict(lambda: defaultdict(list))  # To calculate pitcher control
 
         batter_all_at_bats = defaultdict(set)
         batter_hits = defaultdict(int)
-
-        batter_statistics = defaultdict(lambda: {
-            'total_encountered': torch.zeros(pitch_statistics_shape),
-            'total_swung': torch.zeros(pitch_statistics_shape),
-            'total_hits': torch.zeros(pitch_statistics_shape)
-        })
+        batter_total_encountered = defaultdict(lambda: torch.zeros(pitch_statistics_shape))
+        batter_total_swung = defaultdict(lambda: torch.zeros(pitch_statistics_shape))
+        batter_total_hits = defaultdict(lambda: torch.zeros(pitch_statistics_shape))
 
         velocities = []  # To normalize the velocity data
 
         # Load the pitches, year by year
-        for year in tqdm(range(2015, 2019)):
+        for year in tqdm(range(2008, 2024)):
             pitch_data: DataFrame = load_blosc2(f'{raw_data_dir}{year}.blosc2')
             pitch_data = pitch_data.replace({np.nan: None})
 
@@ -133,17 +143,14 @@ class BaseballData:
 
                 # Update player statistics
                 if pitch.is_valid() and pitch.speed is not None:
-                    def increment_statistic(statistic: Tensor, amount: float = 1):
-                        for x, y in default.COMBINED_ZONES[pitch.zone_idx].coords:
-                            statistic[pitch.type, x, y] += amount
-
                     # Pitcher
                     pitcher_all_at_bats[pitch.pitcher_id].add((pitch.game_id, pitch.at_bat_num))
-                    if pitch.result.batter_hit():
-                        pitcher_hits_against[pitch.pitcher_id] += 1
+                    pitcher_hits_against[pitch.pitcher_id] += int(pitch.result.batter_hit())
 
-                    increment_statistic(pitcher_statistics[pitch.pitcher_id]['total_thrown'])
-                    increment_statistic(pitcher_statistics[pitch.pitcher_id]['total_velocity'], pitch.speed)
+                    zone_coord = default.COMBINED_ZONES[pitch.zone_idx].coords[0]
+                    loc = (pitch.type, *zone_coord)
+                    pitcher_total_thrown[pitch.pitcher_id][*loc] += 1
+                    pitcher_total_velocity[pitch.pitcher_id][*loc] += pitch.speed
                     velocities.append(pitch.speed)
 
                     if pitch.at_bat_state.balls == 3 and pitch.at_bat_state.strikes == 0:
@@ -151,14 +158,11 @@ class BaseballData:
 
                     # Batter
                     batter_all_at_bats[pitch.batter_id].add((pitch.game_id, pitch.at_bat_num))
-                    if pitch.result.batter_hit():
-                        batter_hits[pitch.batter_id] += 1
+                    batter_hits[pitch.batter_id] += int(pitch.result.batter_hit())
 
-                    increment_statistic(batter_statistics[pitch.batter_id]['total_encountered'])
-                    if pitch.result.batter_swung():
-                        increment_statistic(batter_statistics[pitch.batter_id]['total_swung'])
-                    if pitch.result.batter_hit():
-                        increment_statistic(batter_statistics[pitch.batter_id]['total_hits'])
+                    batter_total_encountered[pitch.batter_id][*loc] += 1
+                    batter_total_swung[pitch.batter_id][*loc] += int(pitch.result.batter_swung())
+                    batter_total_hits[pitch.batter_id][*loc] += int(pitch.result.batter_hit())
 
             save_blosc2(pitches, processed_data_dir + f'{year}.blosc2')
 
@@ -167,11 +171,10 @@ class BaseballData:
         velocity_std = torch.std(torch.tensor(velocities))
 
         # Aggregate pitcher statistics
-        for pitcher_id, stats in pitcher_statistics.items():
-            pitcher = pitchers[pitcher_id]
-            pitcher.set_throwing_frequency_data(stats['total_thrown'])
+        for pitcher_id, pitcher in pitchers.items():
+            pitcher.set_throwing_frequency_data(fill_partial_stat(pitcher_total_thrown[pitcher_id]))
 
-            avg_velocity = stats['total_velocity'] / stats['total_thrown']
+            avg_velocity = fill_partial_stat(pitcher_total_velocity[pitcher_id] / pitcher_total_thrown[pitcher_id])
             normalized_velocity = nan_to_num((avg_velocity - velocity_mean) / velocity_std)
 
             pitcher.set_average_velocity_data(normalized_velocity)
@@ -190,10 +193,9 @@ class BaseballData:
                         pass
 
         # Aggregate batter statistics
-        for batter_id, stats in batter_statistics.items():
-            batter = batters[batter_id]
-            batter.set_swinging_frequency_data(nan_to_num(stats['total_swung']))
-            batter.set_batting_average_data(nan_to_num(stats['total_hits'] / stats['total_encountered']))
+        for batter_id, batter in batters.items():
+            batter.set_swinging_frequency_data(nan_to_num(fill_partial_stat(batter_total_swung[batter_id])))
+            batter.set_batting_average_data(nan_to_num(fill_partial_stat(batter_total_hits[batter_id] / batter_total_encountered[batter_id])))
 
         # Add the OBP statistics to the players
         batter_obp_list = sorted([(batter_id, batter_hits[batter_id] / len(batter_all_at_bats[batter_id])) for batter_id in batters.keys()], key=lambda x: x[1])

@@ -19,6 +19,8 @@ class Batter:
         num_at_bats (int): The number of at-bats the batter has had.
     """
 
+    __slots__ = ['data', 'obp', 'obp_percentile', 'num_at_bats']
+
     def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
                  data: torch.Tensor = None):
         if data:
@@ -68,6 +70,8 @@ class Pitcher:
             to train the PitcherControl network.
         num_batters_faced (int): The number of batters faced by the pitcher.
     """
+
+    __slots__ = ['data', 'obp', 'obp_percentile', 'estimated_control', 'num_batters_faced']
 
     def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
                  data: torch.Tensor = None):
