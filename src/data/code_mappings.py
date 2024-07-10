@@ -67,7 +67,7 @@ at_bat_event_mapping = {
     'home_run': PitchResult.HIT_HOME_RUN,
 
     # Walks (already covered in pitch_result_mapping)
-    'hit_by_pitch': None,
+    'hit_by_pitch': PitchResult.HIT_SINGLE,
     'walk': None,
     'catcher_interf': None,
     'intent_walk': None,

@@ -43,8 +43,8 @@ class Zones:
     | o o o |
     * ----- *
 
-    Borderline zones are also included. These are just outside the strike zone and are used to help determine
-    batter patience.
+    Borderline zones are also included. These are considered one baseball's width around the edge of the strike zone
+    (within and without), and are used to help determine batter patience.
     """
 
     # The width/height of the virtual strike zone
@@ -56,6 +56,7 @@ class Zones:
         :param sz_top: The top of the strike zone
         :param sz_bottom: The bottom of the strike zone
         """
+
         self.ZONES = []
 
         # Strike zones
