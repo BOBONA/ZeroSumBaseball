@@ -42,7 +42,7 @@ def fill_partial_stat(stat: Tensor):
     """Utility function"""
 
     for zone in default.ZONES:
-        if zone.coords > 1:
+        if len(zone.coords) > 1:
             for coord in zone.coords[1:]:
                 stat[:, *coord] = stat[:, *zone.coords[0]]
     return stat
@@ -171,7 +171,8 @@ class BaseballData:
         velocity_std = torch.std(torch.tensor(velocities))
 
         # Aggregate pitcher statistics
-        for pitcher_id, pitcher in pitchers.items():
+        for pitcher_id in pitcher_all_at_bats.keys():
+            pitcher = pitchers[pitcher_id]
             pitcher.set_throwing_frequency_data(fill_partial_stat(pitcher_total_thrown[pitcher_id]))
 
             avg_velocity = fill_partial_stat(pitcher_total_velocity[pitcher_id] / pitcher_total_thrown[pitcher_id])
@@ -193,7 +194,8 @@ class BaseballData:
                         pass
 
         # Aggregate batter statistics
-        for batter_id, batter in batters.items():
+        for batter_id in batter_all_at_bats.keys():
+            batter = batters[batter_id]
             batter.set_swinging_frequency_data(nan_to_num(fill_partial_stat(batter_total_swung[batter_id])))
             batter.set_batting_average_data(nan_to_num(fill_partial_stat(batter_total_hits[batter_id] / batter_total_encountered[batter_id])))
 
