@@ -173,4 +173,5 @@ def train(epochs: int = 30, batch_size: int = 128, learning_rate: float = 0.0003
 
 
 if __name__ == '__main__':
+    # Converged to ~1.341 testing loss
     train(epochs=25, learning_rate=0.0003, batch_size=128, path=f'../../model_weights/swing_outcome.pth')

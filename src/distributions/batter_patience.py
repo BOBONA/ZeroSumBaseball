@@ -73,8 +73,8 @@ class BatterSwings(nn.Module):
         return output
 
 
-def batter_patience_map(pitch_idx: int, pitch: Pitch) -> (int, (Tensor, Tensor, Tensor, Tensor), Tensor):
-    return (pitch_idx, (pitch.at_bat.batter.data, pitch.get_one_hot_encoding(),
+def batter_patience_map(bd: BaseballData, pitch_idx: int, pitch: Pitch) -> (int, (Tensor, Tensor, Tensor, Tensor), Tensor):
+    return (pitch_idx, (bd.batters[pitch.batter_id].data, pitch.get_one_hot_encoding(),
                         torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
                         torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32),
                         torch.tensor(pitch.at_bat_state.num_runs, dtype=torch.float32),
@@ -88,16 +88,16 @@ def batter_patience_map(pitch_idx: int, pitch: Pitch) -> (int, (Tensor, Tensor, 
 def get_batter_patience_set(data: BaseballData) -> (PitchDataset, PitchDataset):
     return PitchDataset.get_split_on_attribute(
         data, 0.2,
-        attribute=lambda p: p.at_bat.batter,
-        filter_on=lambda p: p.location.is_borderline,
-        map_to=batter_patience_map,
+        attribute=lambda p: data.batters[p.batter_id],
+        filter_on=lambda p: p.is_borderline(),
+        map_to=lambda idx, p: batter_patience_map(data, idx, p),
         seed=0
     )
 
 
 def train(epochs: int = 50, batch_size: int = 512, learning_rate: float = 0.001,
           path: str = '../../model_weights/batter_patience.pth'):
-    data = BaseballData.load_with_cache()
+    data = BaseballData()
 
     training_dataset, validation_dataset = get_batter_patience_set(data)
 
@@ -112,7 +112,7 @@ def train(epochs: int = 50, batch_size: int = 512, learning_rate: float = 0.001,
         model.load_state_dict(torch.load(path))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=25, gamma=0.3)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.3)
     criterion = nn.BCELoss()
 
     loader_length = len(training_dataloader)
@@ -152,6 +152,5 @@ def train(epochs: int = 50, batch_size: int = 512, learning_rate: float = 0.001,
 
 
 if __name__ == '__main__':
-    # Lower batch_size does not work as well on this model, possibly because of the high amount of
-    # randomness in a batter's swing decision. Note, this did not quite converge in 50 epochs.
-    train(epochs=40, batch_size=512, learning_rate=0.0003)
+    # This should achieve a testing loss of ~0.564
+    train(epochs=30, batch_size=512, learning_rate=0.0003)

@@ -63,7 +63,7 @@ def get_pitch_control_sets(data: BaseballData) -> (PitchControlDataset, PitchCon
 
 def train(epochs: int = 400, batch_size: int = 5, learning_rate: float = 0.0001,
           path: str = '../../model_weights/pitcher_control.pth'):
-    data = BaseballData.load_with_cache()
+    data = BaseballData()
 
     training_dataset, validation_dataset = get_pitch_control_sets(data)
 

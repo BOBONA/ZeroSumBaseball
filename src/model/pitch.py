@@ -60,6 +60,11 @@ class Pitch:
 
         return default.COMBINED_ZONES[self.zone_idx]
 
+    def is_borderline(self):
+        """Returns whether the pitch is borderline."""
+
+        return self.zone_idx >= len(default.ZONES)
+
     @classmethod
     def get_encoding(cls, pitch_type: PitchType, location: Zone):
         one_hot = torch.zeros(len(PitchType), Zones.DIMENSION, Zones.DIMENSION)

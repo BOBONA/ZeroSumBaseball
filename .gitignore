@@ -1,4 +1,5 @@
 .idea
 raw_data
 !raw_data/README.md
+!raw_data/fetch_raw_data.py
 processed_data

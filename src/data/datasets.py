@@ -81,7 +81,7 @@ class PitchDataset(Dataset):
         :param data_source: The data source for the dataset
         :param valid_only: Whether to only include valid pitches
         :param filter_on: A function that filters the pitches
-        :param map_to: A function that maps the pitches to a different type
+        :param map_to: A function that maps the pitches (with their index in the source) to a different type
         :param map_lazy: Whether to map the pitches lazily
         :param pitches: A list of pitches to use instead of the data source
         :param indices: A list of indices to use as an ordered subset of the data source
