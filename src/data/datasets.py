@@ -150,7 +150,7 @@ class PitchControlDataset(Dataset):
 
     def __init__(self, data_source: BaseballData | None, pitchers: list[Pitcher] | None = None, empty_data: bool = False):
         self.data = []
-        for i, pitcher in enumerate(data_source.pitchers.values() if data_source is not None else pitchers):
+        for i, pitcher in enumerate(data_source.pitchers.values() if pitchers is None else pitchers):
             if not empty_data:
                 for pitch_type, distribution in pitcher.estimated_control.items():
                     self.data.append((pitcher.obp_percentile, (pitcher.data, pitch_type.get_one_hot_encoding()),

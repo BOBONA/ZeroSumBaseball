@@ -19,7 +19,7 @@ from src.data.datasets import SwingResult, PitchDataset, PitchControlDataset
 from src.distributions.batter_patience import BatterSwings, batter_patience_map
 from src.distributions.pitcher_control import PitcherControl
 from src.distributions.swing_outcome import SwingOutcome, map_swing_outcome
-from src.model.at_bat import AtBatState, PitchResult, AtBat
+from src.model.at_bat import AtBatState, PitchResult
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Pitcher, Batter

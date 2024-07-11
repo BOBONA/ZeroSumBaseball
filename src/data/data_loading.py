@@ -71,7 +71,7 @@ class BaseballData:
 
         if load_pitches:
             self.pitches = []
-            for year in tqdm(range(2008, 2024)):
+            for year in tqdm(range(2008, 2024), desc='Loading pitches'):
                 self.pitches.extend(load_blosc2(processed_data_dir + f'{year}.blosc2'))
 
         if load_players:
