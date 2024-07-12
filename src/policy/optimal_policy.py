@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Self
 
 import cvxpy as cp
+import numpy as np
 import torch
 from torch.distributions import MultivariateNormal
 from torch.utils.data import DataLoader
@@ -32,9 +33,9 @@ type O = bool
 type S = GameState
 
 # These distributions can be indexed into according to the lists defined above
-type SwingOutcomeDistribution = list[list[list[float]]]  # [S_i][A_i][SwingResult] -> swing result probability
-type PitcherControlDistribution = list[list[float]]  # [A_i][ZONE_i] -> pitch outcome zone probability
-type BatterPatienceDistribution = list[list[list[float]]]  # [S_i][PitchType][(BORDERLINE_)ZONE_i] -> batter swing probability
+type SwingOutcomeDistribution = np.ndarray  # [S_i][A_i][SwingResult] -> swing result probability
+type PitcherControlDistribution = np.ndarray  # [A_i][ZONE_i] -> pitch outcome zone probability
+type BatterPatienceDistribution = np.ndarray  # [S_i][PitchType][(BORDERLINE_)ZONE_i] -> batter swing probability
 
 
 class PolicySolver:
@@ -110,7 +111,8 @@ class PolicySolver:
         self.policy_problem = None
         save_blosc2(self, path)
 
-    def initialize_distributions(self, batch_size: int = default_batch, save_distributions: bool = False):
+    def initialize_distributions(self, batch_size: int = default_batch, save_distributions: bool = False,
+                                 load_distributions: bool = False, load_transition: bool = False):
         """
         Initializes the transition distributions for the given pitcher and batter pair. Note that
         the individual calculate distribution methods support batching for multiple pairs, but this 
@@ -120,7 +122,21 @@ class PolicySolver:
         :param save_distributions: Whether to save the distributions to a file distributions.blosc2
         """
 
-        self.transition_distribution = self.precalculate_transition_distribution(batch_size=batch_size, save_distributions=save_distributions)
+        if load_distributions and load_transition:
+            self.transition_distribution = load_blosc2('transition_distribution.blosc2')
+            return
+
+        distributions = defaultdict(lambda: None)
+        if load_distributions:
+            distributions = load_blosc2('distributions.blosc2')
+
+        self.transition_distribution = self.precalculate_transition_distribution(
+            batch_size=batch_size, save_distributions=save_distributions, batter_patiences=distributions['batter_patience'],
+            swing_outcomes=distributions['swing_outcomes'], pitcher_control=distributions['pitcher_control']
+        )
+
+        if save_distributions:
+            save_blosc2(self.transition_distribution, 'transition_distribution.blosc2')
 
     def precalculate_transition_distribution(self, batch_size: int = default_batch,
                                              batter_patiences: BatterPatienceDistribution | None = None,
@@ -213,7 +229,7 @@ class PolicySolver:
         interested_pitches = [(state_i, pitch_i) for state_i in interested_states for pitch_i in range(len(self.pitcher_actions))]
 
         for pitcher_id, batter_id in tqdm(matchups, desc='Calculating swing outcomes'):
-            swing_outcome[(pitcher_id, batter_id)] = [[[] for _ in range(len(self.pitcher_actions))] for _ in range(len(self.game_states))]
+            swing_outcome[(pitcher_id, batter_id)] = np.zeros((len(self.game_states), len(self.pitcher_actions), len(SwingResult)))
 
             pitch_data = [Pitch(self.game_states[state_i], batter_id=batter_id, pitcher_id=pitcher_id,
                                 location=self.pitcher_actions[pitch_i][1], pitch_type=self.pitcher_actions[pitch_i][0], pitch_result=PitchResult.HIT_SINGLE)
@@ -284,15 +300,13 @@ class PolicySolver:
         # To make things simple, we use random sampling to find a distribution of pitch outcomes
         pitcher_control = {}
         for pitcher in tqdm(pitchers, desc='Sampling pitcher control'):
-            pitcher_control[pitcher] = [[0 for _ in range(len(default.COMBINED_ZONES))] for _ in
-                                        range(len(self.pitcher_actions))]
+            pitcher_control[pitcher] = np.zeros((len(self.pitcher_actions), len(default.COMBINED_ZONES)))
 
             for pitch_i, pitch in enumerate(self.pitcher_actions):
                 pitch_type, intended_zone_i = pitch
                 zone_center = default.ZONES[intended_zone_i].center()
                 gaussian = pitcher_type_control[pitcher][pitch_type]
-                gaussian = MultivariateNormal(torch.tensor([zone_center[0], zone_center[1]]),
-                                              gaussian.covariance_matrix)
+                gaussian = MultivariateNormal(torch.tensor([zone_center[0], zone_center[1]]), gaussian.covariance_matrix)
 
                 num_samples = 10000
                 sample_pitches = gaussian.sample(torch.Size((num_samples,)))
@@ -324,8 +338,7 @@ class PolicySolver:
 
         batter_patience = {}
         for batter_i in tqdm(batters, desc='Calculating batter patience'):
-            batter_patience[batter_i] = [[[0 for _ in range(len(default.BORDERLINE_ZONES))] for _ in range(len(PitchType))]
-                                         for _ in range(len(self.game_states))]
+            batter_patience[batter_i] = np.ndarray((len(self.game_states), len(PitchType), len(default.BORDERLINE_ZONES)))
 
             pitch_data = [Pitch(self.game_states[state_i], pitcher_id=-1, batter_id=batter_i,
                                 location=zone_i, pitch_type=PitchType(type_i), pitch_result=PitchResult.HIT_SINGLE)
@@ -475,10 +488,10 @@ class PolicySolver:
 
 
 def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
-    print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
+    # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
     solver = PolicySolver(bd, pitcher_id, batter_lineup)
-    solver.initialize_distributions(save_distributions=True)
+    solver.initialize_distributions(save_distributions=True, load_distributions=True)
     solver.calculate_optimal_policy(print_difference=True)
 
     print(f'ERA {solver.get_value()}')
@@ -488,7 +501,8 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
 
 def main(debug: bool = False):
     if not debug:
-        bd = BaseballData()
+        # bd = BaseballData()
+        bd = None
 
         # The resulting ERA is highly dependent on the pitcher and batter chosen
         # For these kinds of tests we only look at players with more appearances than min_obp_cutoff (167)
@@ -512,4 +526,4 @@ def main(debug: bool = False):
 
 
 if __name__ == '__main__':
-    main(debug=True)
+    main(debug=False)
