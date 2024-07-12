@@ -104,7 +104,10 @@ class PolicySolver:
         return solver
 
     def save(self, path: str):
+        """This method deletes references to self.bd and self.policy_problem before saving, to avoid pickling issues"""
+
         self.bd = None  # We don't want to save the BaseballData object
+        self.policy_problem = None
         save_blosc2(self, path)
 
     def initialize_distributions(self, batch_size: int = default_batch, save_distributions: bool = False):
@@ -400,7 +403,7 @@ class PolicySolver:
             for state_i, state in tqdm(enumerate(self.game_states), f'Iterating over values, iter={iter_num}', total=len(self.game_states)):
                 action_quality = [[sum([prob * (reward + value_src[next_state_i])
                                         for next_state_i, (prob, reward) in transition_distribution[state_i][a_i][o].items()])
-                                   for o in self.batter_actions] for a_i in range(len(self.pitcher_actions))]
+                                   for a_i in range(len(self.pitcher_actions))] for o in self.batter_actions]
 
                 new_state_policy, new_value[state_i] = self.update_policy(action_quality)
                 new_policy.append(new_state_policy)
@@ -427,9 +430,9 @@ class PolicySolver:
         policy = cp.Variable(len(self.pitcher_actions))
         policy_constraints = [policy >= 0, cp.sum(policy) == 1, policy <= max_pitch_percentage]  # Limit the maximum probability of any action
 
-        action_quality = cp.Parameter(shape=(len(self.pitcher_actions), len(self.batter_actions)), sign='positive')
+        action_quality = [cp.Parameter(len(self.pitcher_actions)) for _ in self.batter_actions]
 
-        objective = cp.Minimize(cp.maximum(*[cp.sum([policy[a_i] * action_quality[a_i, o]
+        objective = cp.Minimize(cp.maximum(*[cp.sum([policy[a_i] * action_quality[o][a_i]
                                                      for a_i in range(len(self.pitcher_actions))]) for o in self.batter_actions]))
 
         problem = cp.Problem(objective, policy_constraints)
@@ -442,9 +445,10 @@ class PolicySolver:
             self.initialize_policy_problem()
 
         policy, action_quality_param, problem = self.policy_problem
-        action_quality_param.value = action_quality
+        for o in self.batter_actions:
+            action_quality_param[o].value = action_quality[o]
         problem.solve()
-    
+
         if problem.status != cp.OPTIMAL and problem.status != cp.OPTIMAL_INACCURATE:
             raise ValueError(f'Policy optimization failed, status {problem.status}')
         else:
