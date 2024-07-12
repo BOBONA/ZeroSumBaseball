@@ -7,6 +7,9 @@ from src.model.pitch_type import PitchType
 from src.model.zones import Zones
 
 
+min_obp_cutoff = 167  # Minimum number of at-bats to consider a player for OBP (chosen to represent 95% of pitches)
+
+
 class Batter:
     """
     A Batter is represented as a 3D tensor of shape (2 * len(PitchType), Zones.DIMENSION, Zones.DIMENSION).
@@ -18,6 +21,8 @@ class Batter:
         obp_percentile (float): The batter's percentile in on-base percentage.
         num_at_bats (int): The number of at-bats the batter has had.
     """
+
+    __slots__ = ['data', 'obp', 'obp_percentile', 'num_at_bats']
 
     def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
                  data: torch.Tensor = None):
@@ -68,6 +73,8 @@ class Pitcher:
             to train the PitcherControl network.
         num_batters_faced (int): The number of batters faced by the pitcher.
     """
+
+    __slots__ = ['data', 'obp', 'obp_percentile', 'estimated_control', 'num_batters_faced']
 
     def __init__(self, obp: float | None = None, obp_percentile: float | None = None,
                  data: torch.Tensor = None):

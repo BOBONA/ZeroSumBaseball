@@ -88,8 +88,8 @@ class SwingOutcome(nn.Module):
         return output
 
 
-def map_swing_outcome(idx: int, pitch: Pitch):
-    return (idx, (pitch.at_bat.pitcher.data, pitch.at_bat.batter.data,
+def map_swing_outcome(idx: int, pitch: Pitch, bd: BaseballData):
+    return (idx, (bd.pitchers[pitch.pitcher_id].data, bd.batters[pitch.batter_id].data,
                   pitch.get_one_hot_encoding(),
                   torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
                   torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32),
@@ -104,16 +104,16 @@ def map_swing_outcome(idx: int, pitch: Pitch):
 def get_swing_outcome_dataset(data: BaseballData) -> [PitchDataset, PitchDataset]:
     return PitchDataset.get_split_on_attribute(
         data, 0.2,
-        attribute=lambda p: p.at_bat.pitcher,  # Group by pitcher
+        attribute=lambda p: data.pitchers[p.pitcher_id],  # Group by pitcher
         filter_on=lambda p: p.result.batter_swung(),
-        map_to=map_swing_outcome,
+        map_to=lambda idx, pitch: map_swing_outcome(idx, pitch, data),
         seed=81
     )
 
 
 def train(epochs: int = 30, batch_size: int = 128, learning_rate: float = 0.0003,
           path: str = '../../model_weights/swing_outcome.pth'):
-    data = BaseballData.load_with_cache()
+    data = BaseballData()
     training_set, testing_set = get_swing_outcome_dataset(data)
 
     training_dataloader = DataLoader(training_set, batch_size=batch_size, shuffle=True)
@@ -173,4 +173,5 @@ def train(epochs: int = 30, batch_size: int = 128, learning_rate: float = 0.0003
 
 
 if __name__ == '__main__':
+    # Converged to ~1.341 testing loss
     train(epochs=25, learning_rate=0.0003, batch_size=128, path=f'../../model_weights/swing_outcome.pth')

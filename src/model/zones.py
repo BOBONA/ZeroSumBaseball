@@ -43,8 +43,8 @@ class Zones:
     | o o o |
     * ----- *
 
-    Borderline zones are also included. These are just outside the strike zone and are used to help determine
-    batter patience.
+    Borderline zones are also included. These are considered one baseball's width around the edge of the strike zone
+    (within and without), and are used to help determine batter patience.
     """
 
     # The width/height of the virtual strike zone
@@ -56,6 +56,7 @@ class Zones:
         :param sz_top: The top of the strike zone
         :param sz_bottom: The bottom of the strike zone
         """
+
         self.ZONES = []
 
         # Strike zones
@@ -99,7 +100,7 @@ class Zones:
         self.STRIKE_ZONE_RIGHT = strike_left + width
         self.BALL_SIZE = 3
 
-    def get_zone(self, x_loc: float | None, y_loc: float | None) -> Zone | None:
+    def get_zone(self, x_loc: float | None, y_loc: float | None) -> tuple[int, Zone] | None:
         """Converts physical coordinates x and y (in inches) to virtual coordinates in the strike zone."""
 
         if x_loc is None or y_loc is None:
@@ -111,9 +112,9 @@ class Zones:
                     self.STRIKE_ZONE_BOTTOM - self.BALL_SIZE <= y_loc <= self.STRIKE_ZONE_TOP + self.BALL_SIZE and \
                     not (self.STRIKE_ZONE_LEFT + self.BALL_SIZE <= x_loc <= self.STRIKE_ZONE_RIGHT - self.BALL_SIZE and
                          self.STRIKE_ZONE_BOTTOM + self.BALL_SIZE <= y_loc <= self.STRIKE_ZONE_TOP - self.BALL_SIZE):
-                    return self.BORDERLINE_ZONES[i]
+                    return i + len(self.ZONES), self.BORDERLINE_ZONES[i]
                 else:
-                    return zone
+                    return i, zone
 
     def get_zones_batched(self, x_locs: torch.Tensor, y_locs: torch.Tensor) -> list[int]:
         """
