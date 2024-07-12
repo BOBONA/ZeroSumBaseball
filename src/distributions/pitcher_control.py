@@ -120,5 +120,5 @@ def train(epochs: int = 400, batch_size: int = 5, learning_rate: float = 0.0001,
 
 if __name__ == '__main__':
     # This should converge to ~751 on the training set
-    # There might be something wrong with this scheme, as it doesn't seem to be learning very well
+    # There might be something wrong with this setup, as it doesn't seem to be learning very well
     train(batch_size=10, epochs=400, learning_rate=0.00005, path='../../model_weights/pitcher_control.pth')

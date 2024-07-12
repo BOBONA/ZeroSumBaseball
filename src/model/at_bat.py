@@ -125,6 +125,7 @@ class AtBatState:
                 f"{'x' if self.first else '-'}{'x' if self.second else '-'}{'x' if self.third else '-'})")
 
     def __hash__(self):
+        # Small thing to speed up hashing, probably not necessary anymore
         if self.precomputed_hash is None:
             self.precomputed_hash = hash((self.balls, self.strikes, self.num_outs, self.first, self.second, self.third))
         return self.precomputed_hash

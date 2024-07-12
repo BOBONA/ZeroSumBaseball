@@ -72,7 +72,7 @@ class PitchDataset(Dataset):
     for filtering and mapping.
     """
 
-    def __init__(self, data_source: BaseballData | None, valid_only: bool = True,
+    def __init__(self, data_source: BaseballData | None = None, valid_only: bool = True,
                  filter_on: Callable[[Pitch], bool] | None = None,
                  map_to: Callable[[int, Pitch], any] | None = None,
                  map_lazy: bool = True,
@@ -146,9 +146,12 @@ class PitchControlDataset(Dataset):
     of a fitted bivariate normal distribution.
 
     The empty_data flag is used for testing purposes
+
+    Honestly, this class is a bit of a mess, but it suffices for pitch control... If we work on improving results
+    for the pitch control distribution then this can be refactored.
     """
 
-    def __init__(self, data_source: BaseballData | None, pitchers: list[Pitcher] | None = None, empty_data: bool = False):
+    def __init__(self, data_source: BaseballData | None = None, pitchers: list[Pitcher] | None = None, empty_data: bool = False):
         self.data = []
         for i, pitcher in enumerate(data_source.pitchers.values() if pitchers is None else pitchers):
             if not empty_data:
@@ -179,5 +182,5 @@ class PitchControlDataset(Dataset):
         train_pitchers = pitchers[:split_idx]
         validation_pitchers = pitchers[split_idx:]
 
-        return (cls(data_source, train_pitchers),
-                cls(data_source, validation_pitchers))
+        return (cls(pitchers=train_pitchers),
+                cls(pitchers=validation_pitchers))

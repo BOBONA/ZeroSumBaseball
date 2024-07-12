@@ -7,6 +7,9 @@ from src.model.pitch_type import PitchType
 from src.model.zones import Zones
 
 
+min_obp_cutoff = 167  # Minimum number of at-bats to consider a player for OBP (chosen to represent 95% of pitches)
+
+
 class Batter:
     """
     A Batter is represented as a 3D tensor of shape (2 * len(PitchType), Zones.DIMENSION, Zones.DIMENSION).

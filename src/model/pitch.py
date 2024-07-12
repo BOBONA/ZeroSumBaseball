@@ -14,8 +14,8 @@ class Pitch:
                  'game_id', 'at_bat_num', 'pitch_num']
 
     def __init__(self, at_bat_state: AtBatState, batter_id: int, pitcher_id: int,
-                 pitch_type: PitchType | None, location: int | None, pitch_result: PitchResult | None,
-                 speed: float | None, plate_x: float | None, plate_z: float | None,
+                 pitch_type: PitchType | None, location: int | None, pitch_result: PitchResult | None = None,
+                 speed: float | None = None, plate_x: float | None = None, plate_z: float | None = None,
                  game_id: int = -1, at_bat_num: int = -1, pitch_num: int = -1):
         """
         :param at_bat_state: The current state of the at-bat BEFORE the pitch is thrown

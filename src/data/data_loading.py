@@ -21,7 +21,7 @@ from src.data.code_mappings import pitch_type_mapping, pitch_result_mapping, at_
 from src.model.at_bat import AtBatState, PitchResult
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
-from src.model.players import Batter, Pitcher
+from src.model.players import Batter, Pitcher, min_obp_cutoff
 from src.model.zones import Zones, default
 
 
@@ -31,7 +31,7 @@ def load_blosc2(path: str):
 
 
 def save_blosc2(data, path: str):
-    if not os.path.exists(os.path.dirname(path)):
+    if os.path.dirname(path) and not os.path.exists(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
 
     with open(path, 'wb') as f:
@@ -173,6 +173,9 @@ class BaseballData:
         # Aggregate pitcher statistics
         for pitcher_id in pitcher_all_at_bats.keys():
             pitcher = pitchers[pitcher_id]
+
+            pitcher.num_batters_faced = len(pitcher_all_at_bats[pitcher_id])
+            pitcher.obp = pitcher_hits_against[pitcher_id] / pitcher.num_batters_faced
             pitcher.set_throwing_frequency_data(fill_partial_stat(pitcher_total_thrown[pitcher_id]))
 
             avg_velocity = fill_partial_stat(pitcher_total_velocity[pitcher_id] / pitcher_total_thrown[pitcher_id])
@@ -196,20 +199,18 @@ class BaseballData:
         # Aggregate batter statistics
         for batter_id in batter_all_at_bats.keys():
             batter = batters[batter_id]
+            batter.num_at_bats = len(batter_all_at_bats[batter_id])
+            batter.obp = batter_hits[batter_id] / batter.num_at_bats
             batter.set_swinging_frequency_data(nan_to_num(fill_partial_stat(batter_total_swung[batter_id])))
             batter.set_batting_average_data(nan_to_num(fill_partial_stat(batter_total_hits[batter_id] / batter_total_encountered[batter_id])))
 
         # Add the OBP statistics to the players
-        batter_obp_list = sorted([(batter_id, batter_hits[batter_id] / len(batter_all_at_bats[batter_id])) for batter_id in batters.keys()], key=lambda x: x[1])
-        pitcher_obp_list = sorted([(pitcher_id, pitcher_hits_against[pitcher_id] / len(pitcher_all_at_bats[pitcher_id])) for pitcher_id in pitchers.keys()], key=lambda x: x[1])
-        for idx, (player_id, obp) in enumerate(batter_obp_list):
-            batters[player_id].obp = obp
-            batters[player_id].obp_percentile = idx / len(batter_obp_list)
-            batters[player_id].num_at_bats = len(batter_all_at_bats[player_id])
-        for idx, (player_id, obp) in enumerate(pitcher_obp_list):
-            pitchers[player_id].obp = obp
-            pitchers[player_id].obp_percentile = idx / len(pitcher_obp_list)
-            pitchers[player_id].num_batters_faced = len(pitcher_all_at_bats[player_id])
+        batter_by_obp = sorted(filter(lambda b: b.num_at_bats > min_obp_cutoff, batters.values()), key=lambda b: b.obp)
+        pitcher_by_obp = sorted(filter(lambda p: p.num_batters_faced > min_obp_cutoff, pitchers.values()), key=lambda p: p.obp, reverse=True)
+        for idx, batter in enumerate(batter_by_obp):
+            batter.obp_percentile = idx / len(batter_by_obp)
+        for idx, pitcher in enumerate(pitcher_by_obp):
+            pitcher.obp_percentile = idx / len(pitcher_by_obp)
 
         players = {
             'pitchers': pitchers,
