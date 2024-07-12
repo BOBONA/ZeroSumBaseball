@@ -18,7 +18,7 @@ except NameError:
     from tqdm import tqdm
 
 from src.data.code_mappings import pitch_type_mapping, pitch_result_mapping, at_bat_event_mapping
-from src.model.at_bat import AtBatState, PitchResult
+from src.model.state import GameState, PitchResult
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Batter, Pitcher, min_obp_cutoff
@@ -115,9 +115,9 @@ class BaseballData:
 
             for row in pitch_data.itertuples(index=False):
                 row: NamedTuple  # Consult https://baseballsavant.mlb.com/csv-docs for column names
-                state = AtBatState(balls=row.balls, strikes=row.strikes, runs=row.bat_score,
-                                   outs=row.outs_when_up, first=bool(row.on_1b),
-                                   second=bool(row.on_2b), third=bool(row.on_3b))
+                state = GameState(inning=row.inning - 1, balls=row.balls, strikes=row.strikes, runs=row.bat_score,
+                                  outs=row.outs_when_up, first=bool(row.on_1b),
+                                  second=bool(row.on_2b), third=bool(row.on_3b))
 
                 pitch_type = pitch_type_mapping.get(row.pitch_type, None)
 
@@ -132,7 +132,7 @@ class BaseballData:
                 if pitch_outcome == PitchResult.HIT_SINGLE:
                     pitch_outcome = at_bat_event_mapping.get(row.events, PitchResult.HIT_SINGLE)
 
-                pitch = Pitch(at_bat_state=state, batter_id=row.batter, pitcher_id=row.pitcher,
+                pitch = Pitch(game_state=state, batter_id=row.batter, pitcher_id=row.pitcher,
                               pitch_type=pitch_type, location=zone_idx, pitch_result=pitch_outcome,
                               speed=row.release_speed, plate_x=plate_x, plate_z=plate_z,
                               game_id=row.game_pk, at_bat_num=row.at_bat_number,
@@ -153,7 +153,7 @@ class BaseballData:
                     pitcher_total_velocity[pitch.pitcher_id][*loc] += pitch.speed
                     velocities.append(pitch.speed)
 
-                    if pitch.at_bat_state.balls == 3 and pitch.at_bat_state.strikes == 0:
+                    if pitch.game_state.balls == 3 and pitch.game_state.strikes == 0:
                         pitch_locations_30[pitch.pitcher_id][pitch.type].append((pitch.plate_x, pitch.plate_z))
 
                     # Batter

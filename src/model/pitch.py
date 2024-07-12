@@ -1,6 +1,6 @@
 import torch
 
-from src.model.at_bat import AtBatState, PitchResult
+from src.model.state import GameState, PitchResult
 from src.model.pitch_type import PitchType
 from src.model.zones import Zone, Zones, default
 
@@ -10,15 +10,15 @@ class Pitch:
     A Pitch is represented as a pair of a pitch type and a location in the strike zone.
     """
 
-    __slots__ = ['at_bat_state', 'batter_id', 'pitcher_id', 'type', 'zone_idx', 'result', 'speed', 'plate_x', 'plate_z',
+    __slots__ = ['game_state', 'batter_id', 'pitcher_id', 'type', 'zone_idx', 'result', 'speed', 'plate_x', 'plate_z',
                  'game_id', 'at_bat_num', 'pitch_num']
 
-    def __init__(self, at_bat_state: AtBatState, batter_id: int, pitcher_id: int,
+    def __init__(self, game_state: GameState, batter_id: int, pitcher_id: int,
                  pitch_type: PitchType | None, location: int | None, pitch_result: PitchResult | None = None,
                  speed: float | None = None, plate_x: float | None = None, plate_z: float | None = None,
                  game_id: int = -1, at_bat_num: int = -1, pitch_num: int = -1):
         """
-        :param at_bat_state: The current state of the at-bat BEFORE the pitch is thrown
+        :param game_state: The current state of the at-bat BEFORE the pitch is thrown
         :param batter_id: The ID of the batter
         :param pitcher_id: The ID of the pitcher
         :param pitch_type: The type of pitch thrown
@@ -32,7 +32,7 @@ class Pitch:
         :param pitch_num: The number of the pitch in the at-bat
         """
 
-        self.at_bat_state = at_bat_state
+        self.game_state = game_state
         self.batter_id = batter_id
         self.pitcher_id = pitcher_id
         self.type = pitch_type

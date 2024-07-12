@@ -91,13 +91,13 @@ class SwingOutcome(nn.Module):
 def map_swing_outcome(idx: int, pitch: Pitch, bd: BaseballData):
     return (idx, (bd.pitchers[pitch.pitcher_id].data, bd.batters[pitch.batter_id].data,
                   pitch.get_one_hot_encoding(),
-                  torch.tensor(pitch.at_bat_state.strikes, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.balls, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.num_runs, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.num_outs, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.first, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.second, dtype=torch.float32),
-                  torch.tensor(pitch.at_bat_state.third, dtype=torch.float32)),
+                  torch.tensor(pitch.game_state.strikes, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.balls, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.num_runs, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.num_outs, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.first, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.second, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.third, dtype=torch.float32)),
             SwingResult.from_pitch_result(pitch.result).get_one_hot_encoding())
 
 

@@ -3,7 +3,7 @@ In this file, we define some mappings from codes in the datasets to our enum val
 Note that these mappings are not perfect and someone with more knowledge ought to look at them.
 """
 
-from src.model.at_bat import PitchResult
+from src.model.state import PitchResult
 from src.model.pitch_type import PitchType
 
 # https://www.mlb.com/glossary/pitch-types

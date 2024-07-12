@@ -30,36 +30,29 @@ class PitchResult(IntEnum):
                 self == PitchResult.HIT_HOME_RUN)
 
 
-class AtBatState:
-    """
-    Represents the changing state of an at-bat. This is also used to represent the outcome of an at-bat,
-    which is made up of the number of outs and the outcome event (if applicable).
+class GameState:
+    """Represents the changing state of a game."""
 
-    Also, note that num_runs is not currently used in computing the optimal policy, although limiting it
-    does have a small effect, it also increases the number of states significantly.
-    """
-
-    __slots__ = ['balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'precomputed_hash']
+    __slots__ = ['inning', 'balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'batter']
 
     max_runs = 9
 
-    def __init__(self, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False):
-        self.balls = balls
-        self.strikes = strikes
-
-        # The state of the first, second, and third bases
+    def __init__(self, inning=0, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, batter=0):
+        self.inning = inning    # 0-8 (but in the real world, up to 16 innings have been played)
+        self.balls = balls      # 0-3
+        self.strikes = strikes  # 0-2
         self.num_runs = runs
-        self.num_outs = outs
-        self.first = first
-        self.second = second
-        self.third = third
-
-        self.precomputed_hash = None
+        self.num_outs = outs    # 0-2
+        self.first = first      # True if runner on first
+        self.second = second    # True if runner on second
+        self.third = third      # True if runner on third
+        self.batter = batter    # 0-8 (9 batters)
 
     def transition_from_pitch_result(self, result: PitchResult) -> Self:
-        next_state = AtBatState(self.balls, self.strikes, self.num_runs, self.num_outs, self.first, self.second, self.third)
+        next_state = GameState(inning=self.inning, balls=self.balls, strikes=self.strikes, runs=self.num_runs,
+                               outs=self.num_outs, first=self.first, second=self.second, third=self.third, batter=self.batter)
 
-        if next_state.num_outs >= 3 or next_state.num_runs >= AtBatState.max_runs:
+        if next_state.inning >= 9 or next_state.num_runs >= GameState.max_runs:
             return next_state
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
@@ -77,15 +70,21 @@ class AtBatState:
             next_state.move_batter(4)
         elif result == PitchResult.HIT_OUT:
             next_state.num_outs += 1
+            next_state.batter = (next_state.batter + 1) % 9
 
-        if next_state.balls == 4:
-            next_state.move_batter(1)  # Walk
+        if next_state.balls == 4:  # Walk
+            next_state.move_batter(1)
         if next_state.strikes == 3:
             next_state.num_outs += 1
             next_state.balls = next_state.strikes = 0
+            next_state.batter = (next_state.batter + 1) % 9
 
-        if next_state.num_runs > AtBatState.max_runs:
-            next_state.num_runs = AtBatState.max_runs
+        if next_state.num_runs > GameState.max_runs:
+            next_state.num_runs = GameState.max_runs
+
+        if next_state.num_outs >= 3:
+            next_state.inning += 1
+            next_state.num_outs = 0
 
         return next_state
 
@@ -111,24 +110,22 @@ class AtBatState:
             self.first = True
 
         self.balls = self.strikes = 0
+        self.batter = (self.batter + 1) % 9
 
     def value(self) -> int:
         """
         Returns the "value" of the current state. Of course, value is more complicated than a single integer,
-        more so this is a target for the value iteration algorithm
+        this is a target for the value iteration algorithm
         """
 
         return self.num_runs
 
     def __repr__(self):
-        return (f"AtBatState({self.balls}/{self.strikes}, {self.num_runs}, {self.num_outs}, "
+        return (f"GameState(i{self.inning} b{self.batter}: {self.balls}/{self.strikes}, {self.num_runs}, {self.num_outs}, "
                 f"{'x' if self.first else '-'}{'x' if self.second else '-'}{'x' if self.third else '-'})")
 
     def __hash__(self):
-        # Small thing to speed up hashing, probably not necessary anymore
-        if self.precomputed_hash is None:
-            self.precomputed_hash = hash((self.balls, self.strikes, self.num_outs, self.first, self.second, self.third))
-        return self.precomputed_hash
+        return hash((self.inning, self.balls, self.strikes, self.num_outs, self.first, self.second, self.third, self.batter))
 
     def __eq__(self, other):
         return hash(self) == hash(other)

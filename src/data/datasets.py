@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from src.data.data_loading import BaseballData
-from src.model.at_bat import PitchResult
+from src.model.state import PitchResult
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Pitcher
