@@ -32,6 +32,9 @@ the batter's intentions, which seems difficult.
 
 - In predicting swing results, we do not differentiate between the batter directly getting out and outs on the field.
 
+- The pitcher's options are limited in a way that might not be representative of the actual game. The pitcher cannot
+aim for a borderline zone and can only aim for 5x5 centers.
+
 ## TODO
 - Test strategies for optimizing batter selection
 

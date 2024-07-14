@@ -48,12 +48,12 @@ class GameState:
         self.third = third      # True if runner on third
         self.batter = batter    # 0-8 (9 batters)
 
-    def transition_from_pitch_result(self, result: PitchResult) -> Self:
+    def transition_from_pitch_result(self, result: PitchResult) -> tuple[Self, int]:
         next_state = GameState(inning=self.inning, balls=self.balls, strikes=self.strikes, runs=self.num_runs,
                                outs=self.num_outs, first=self.first, second=self.second, third=self.third, batter=self.batter)
 
         if next_state.inning >= 9 or next_state.num_runs >= GameState.max_runs:
-            return next_state
+            return next_state, 0
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
                 (result == PitchResult.SWINGING_FOUL and next_state.strikes < 3)):
@@ -85,8 +85,9 @@ class GameState:
         if next_state.num_outs >= 3:
             next_state.inning += 1
             next_state.num_outs = 0
+            next_state.first = next_state.second = next_state.third = False
 
-        return next_state
+        return next_state, next_state.num_runs - self.num_runs
 
     def move_batter(self, num_bases: int):
         """A helper method, advances runners and resets count"""
