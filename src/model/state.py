@@ -70,6 +70,7 @@ class GameState:
             next_state.move_batter(4)
         elif result == PitchResult.HIT_OUT:
             next_state.num_outs += 1
+            next_state.balls = next_state.strikes = 0
             next_state.batter = (next_state.batter + 1) % 9
 
         if next_state.balls == 4:  # Walk

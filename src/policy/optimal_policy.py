@@ -126,7 +126,8 @@ class PolicySolver:
         """
 
         if load_distributions and load_transition:
-            self.transition_distribution = load_blosc2('transition_distribution.blosc2')
+            distributions = load_blosc2('transition_distribution.blosc2')
+            self.transitions, self.transition_distribution = distributions['transitions'], distributions['transition_distribution']
             return
 
         distributions = defaultdict(lambda: None)
@@ -139,7 +140,7 @@ class PolicySolver:
         )
 
         if save_distributions:
-            save_blosc2(self.transition_distribution, 'transition_distribution.blosc2')
+            save_blosc2({'transition_distribution': self.transition_distribution, 'transitions': self.transitions}, 'transition_distribution.blosc2')
 
     def precalculate_transition_distribution(self, batch_size: int = default_batch,
                                              batter_patiences: BatterPatienceDistribution | None = None,
@@ -193,7 +194,7 @@ class PolicySolver:
         for state_i, state in tqdm(enumerate(self.game_states), desc='Calculating transition distribution', total=len(self.game_states)):
             for action_i, action in enumerate(self.pitcher_actions):
                 pitch_type, intended_zone_i = action
-                for batter_swung in self.batter_actions:
+                for batter_swung in range(len(self.batter_actions)):
                     # Given an intended pitch, we get the actual outcome distribution
                     outcome_zone_probs = pitcher_control[action_i]
 
@@ -450,22 +451,21 @@ class PolicySolver:
 
         action_quality = [cp.Parameter(len(self.pitcher_actions)) for _ in self.batter_actions]
 
-        # TODO this might be written wrong still...
         objective = cp.Minimize(cp.maximum(*[cp.sum([policy[a_i] * action_quality[o][a_i]
                                                      for a_i in range(len(self.pitcher_actions))]) for o in self.batter_actions]))
 
         problem = cp.Problem(objective, policy_constraints)
         self.policy_problem = policy, action_quality, problem
 
-    def update_policy(self, action_quality: list[list[float]], print_warnings: bool = False) -> tuple[list[float], float]:
+    def update_policy(self, action_quality: np.ndarray, print_warnings: bool = False) -> tuple[np.asarray, float]:
         """Optimizes a new policy using dynamic programming"""
 
         if self.policy_problem is None:
             self.initialize_policy_problem()
 
         policy, action_quality_param, problem = self.policy_problem
-        for o in self.batter_actions:
-            action_quality_param[o].value = action_quality[o]
+        for o in range(len(self.batter_actions)):
+            action_quality_param[o].value = action_quality[:, o]
         problem.solve()
 
         if problem.status != cp.OPTIMAL and problem.status != cp.OPTIMAL_INACCURATE:
@@ -473,7 +473,7 @@ class PolicySolver:
         else:
             if problem.status == cp.OPTIMAL_INACCURATE and print_warnings:
                 warnings.warn('Inaccurate optimization detected')
-            new_policy = [policy[a_i].value for a_i in range(len(self.pitcher_actions))]
+            new_policy = np.asarray([policy[a_i].value for a_i in range(len(self.pitcher_actions))])
             return new_policy, problem.value
 
     def get_value(self, state: GameState = GameState()) -> float:
@@ -507,7 +507,8 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
 
 def main(debug: bool = False):
     if not debug:
-        bd = BaseballData()
+        # bd = BaseballData()
+        bd = None
 
         # The resulting ERA is highly dependent on the pitcher and batter chosen
         # For these kinds of tests we only look at players with more appearances than min_obp_cutoff (167)
@@ -524,6 +525,7 @@ def main(debug: bool = False):
         test_era(bd, *full_matchup)
     else:
         # distributions = load_blosc2('distributions.blosc2')
+        transition_distribution = load_blosc2('transition_distribution.blosc2')
         solver = PolicySolver.from_saved('solved_policy.blosc2')
         raw_values, raw_policy = solver.raw_values, solver.raw_policy
         print(f'ERA {solver.get_value()}')
