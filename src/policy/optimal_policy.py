@@ -77,7 +77,7 @@ class PolicySolver:
 
         self.game_states: list[S] = [
             GameState(inning=inning, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
-            for inning in range(9) for balls in range(4) for strikes in range(3) for outs in range(3)
+            for inning in range(GameState.num_innings) for balls in range(4) for strikes in range(3) for outs in range(3)
             for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(9)
         ]
 
@@ -88,7 +88,7 @@ class PolicySolver:
 
         # Terminal states are stored separately for easier indexing
         self.final_states: list[S] = [
-            GameState(inning=9, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
+            GameState(inning=GameState.num_innings, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
             for balls in range(4) for strikes in range(3) for outs in range(3)
             for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(9)
         ]
@@ -171,12 +171,16 @@ class PolicySolver:
             s = list(dict.fromkeys(s).keys())
             return s + [(-1, 0)] * (self.max_transitions - len(s))
 
-        transitions = np.asarray([pad([map_t(state.transition_from_pitch_result(result)) for result in PitchResult]) for state in self.game_states])
-        probabilities = np.zeros((len(self.game_states), len(self.pitcher_actions), len(self.batter_actions), self.max_transitions))
+        # Since a state can only transition to a limited number of states, we're able to store the transition indexes in
+        # a fixed size array. Empty transitions are padded with (-1, 0)
+        transitions = np.asarray([pad([map_t(state.transition_from_pitch_result(result)) for result in PitchResult]) for state in self.game_states], dtype=np.int32)
+        probabilities = np.zeros((len(self.game_states), len(self.pitcher_actions), len(self.batter_actions), self.max_transitions), dtype=np.float32)
 
+        # Used to transform swing outcome probabilities to transition probabilities. A matrix like this is necessary since
+        # multiple swing outcomes can lead to the same state
         swing_to_transition_matrix = np.asarray([
-            np.asarray([transitions[state_i, :, 0] == self.total_states_dict[
-                self.total_states[state_i].transition_from_pitch_result(result.to_pitch_result())[0]] for result in SwingResult]).transpose()
+            np.asarray([transitions[state_i, :, 0] == self.total_states_dict[self.total_states[state_i].transition_from_pitch_result(result.to_pitch_result())[0]]
+                        for result in SwingResult]).transpose()
             for state_i in range(len(self.game_states))
         ])
 
@@ -199,15 +203,16 @@ class PolicySolver:
                     outcome_zone_probs = pitcher_control[action_i]
 
                     # To account for batter patience, we override the outcomes for borderline zones
-                    patience = batter_patiences[self.batter_lineup[state.batter]][state_i, pitch_type]
-                    swing_probs = (np.zeros(len(default.COMBINED_ZONES)) + batter_swung) * ~borderline_mask + patience * borderline_mask
+                    swing_probs = np.zeros(len(default.COMBINED_ZONES)) + batter_swung
+                    swing_probs[borderline_mask] = batter_patiences[self.batter_lineup[state.batter]][state_i, pitch_type]
                     take_probs = 1 - swing_probs
 
                     # Handle swing outcomes (stochastic)
-                    # TODO this is problematic, we need to choose swing outcome from the outcome zones not the intended zone
-                    result_probs = swing_outcomes[(self.pitcher_id, self.batter_lineup[state.batter])][state_i, action_i]
-                    transition_probs = np.dot(swing_to_transition_matrix[state_i], result_probs)
-                    probabilities[state_i, action_i, batter_swung] += transition_probs * np.dot(swing_probs, outcome_zone_probs)
+                    # I am unsure why value decreases slightly now that we are using each zone's swing outcome distribution (instead of just the intended zone)
+                    result_probs = swing_outcomes[(self.pitcher_id, self.batter_lineup[state.batter])][state_i, pitch_type]
+                    transition_probs = np.dot(swing_to_transition_matrix[state_i], result_probs.transpose())
+                    zone_swing_probs = swing_probs * outcome_zone_probs
+                    probabilities[state_i, action_i, batter_swung] += np.dot(transition_probs, zone_swing_probs[0:len(default.ZONES)] + zone_swing_probs[len(default.ZONES):])
 
                     # Handle take outcome (deterministic)
                     probabilities[state_i, action_i, batter_swung, called_strike_i] += np.dot(take_probs, outcome_zone_probs * strike_mask)
@@ -237,7 +242,7 @@ class PolicySolver:
         interested_pitches = [(state_i, pitch_i) for state_i in interested_states for pitch_i in range(len(self.pitcher_actions))]
 
         for pitcher_id, batter_id in tqdm(matchups, desc='Calculating swing outcomes'):
-            swing_outcome[(pitcher_id, batter_id)] = np.zeros((len(self.game_states), len(self.pitcher_actions), len(SwingResult)))
+            swing_outcome[(pitcher_id, batter_id)] = np.zeros((len(self.game_states), len(PitchType), len(default.ZONES), len(SwingResult)), dtype=np.float32)
 
             pitch_data = [Pitch(self.game_states[state_i], batter_id=batter_id, pitcher_id=pitcher_id,
                                 location=self.pitcher_actions[pitch_i][1], pitch_type=self.pitcher_actions[pitch_i][0], pitch_result=PitchResult.HIT_SINGLE)
@@ -255,7 +260,8 @@ class PolicySolver:
 
                 for i, result_distribution in enumerate(result_distributions):
                     state_i, pitch_i = interested_pitches[batch * batch_size + i]
-                    swing_outcome[(pitcher_id, batter_id)][state_i][pitch_i] = result_distribution
+                    pitch_type, zone_i = self.pitcher_actions[pitch_i]
+                    swing_outcome[(pitcher_id, batter_id)][state_i, pitch_type, zone_i] = result_distribution
 
             for state_i in range(len(self.game_states)):
                 if state_i not in interested_states:
@@ -263,7 +269,8 @@ class PolicySolver:
                         state = self.game_states[state_i]
                         interested_state = self.total_states_dict[GameState(balls=state.balls, strikes=state.strikes, outs=state.num_outs,
                                                                             first=state.first, second=state.second, third=state.third)]
-                        swing_outcome[(pitcher_id, batter_id)][state_i, pitch_i] = swing_outcome[(pitcher_id, batter_id)][interested_state][pitch_i]
+                        pitch_type, zone_i = self.pitcher_actions[pitch_i]
+                        swing_outcome[(pitcher_id, batter_id)][state_i, pitch_type, zone_i] = swing_outcome[(pitcher_id, batter_id)][interested_state, pitch_type, zone_i]
 
         return swing_outcome
 
@@ -308,7 +315,7 @@ class PolicySolver:
         # To make things simple, we use random sampling to find a distribution of pitch outcomes
         pitcher_control = {}
         for pitcher in tqdm(pitchers, desc='Sampling pitcher control'):
-            pitcher_control[pitcher] = np.zeros((len(self.pitcher_actions), len(default.COMBINED_ZONES)))
+            pitcher_control[pitcher] = np.zeros((len(self.pitcher_actions), len(default.COMBINED_ZONES)), dtype=np.float32)
 
             for pitch_i, pitch in enumerate(self.pitcher_actions):
                 pitch_type, intended_zone_i = pitch
@@ -346,7 +353,7 @@ class PolicySolver:
 
         batter_patience = {}
         for batter_i in tqdm(batters, desc='Calculating batter patience'):
-            batter_patience[batter_i] = np.zeros((len(self.game_states), len(PitchType), len(default.COMBINED_ZONES)))
+            batter_patience[batter_i] = np.zeros((len(self.game_states), len(PitchType), len(default.ZONES)), dtype=np.float32)
 
             pitch_data = [Pitch(self.game_states[state_i], pitcher_id=-1, batter_id=batter_i,
                                 location=zone_i, pitch_type=PitchType(type_i), pitch_result=PitchResult.HIT_SINGLE)
@@ -364,7 +371,7 @@ class PolicySolver:
 
                 for i, swing_percent in enumerate(swing_percent):
                     state_i, pitch_type_i, zone_i = interested_pitches[batch * batch_size + i]
-                    batter_patience[batter_i][state_i, pitch_type_i, zone_i + len(default.ZONES)] = swing_percent
+                    batter_patience[batter_i][state_i, pitch_type_i, zone_i] = swing_percent
 
             for state_i in range(len(self.game_states)):
                 if state_i not in interested_states:
@@ -497,7 +504,7 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
     # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
     solver = PolicySolver(bd, pitcher_id, batter_lineup)
-    solver.initialize_distributions(save_distributions=True, load_distributions=True)
+    solver.initialize_distributions(save_distributions=True, load_distributions=False)
     solver.calculate_optimal_policy(print_difference=True)
 
     print(f'ERA {solver.get_value()}')
@@ -507,8 +514,8 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
 
 def main(debug: bool = False):
     if not debug:
-        # bd = BaseballData()
-        bd = None
+        bd = BaseballData()
+        # bd = None
 
         # The resulting ERA is highly dependent on the pitcher and batter chosen
         # For these kinds of tests we only look at players with more appearances than min_obp_cutoff (167)

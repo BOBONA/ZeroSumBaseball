@@ -45,6 +45,11 @@ class Zones:
 
     Borderline zones are also included. These are considered one baseball's width around the edge of the strike zone
     (within and without), and are used to help determine batter patience.
+
+    In our computations, zone indexes are used instead of the direct Zone objects
+    COMBINED_ZONES is a list of ZONES and BORDERLINE_ZONES
+    The only difference between a borderline zone and a regular zone in the actual data is the is_borderline attribute,
+    meaning that an index of a borderline zone is the index of the corresponding zone in ZONES + len(ZONES)
     """
 
     # The width/height of the virtual strike zone

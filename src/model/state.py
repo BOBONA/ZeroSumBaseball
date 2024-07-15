@@ -35,10 +35,11 @@ class GameState:
 
     __slots__ = ['inning', 'balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'batter']
 
+    num_innings = 9  # Although in the real world, games can go into extra innings
     max_runs = 9
 
     def __init__(self, inning=0, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, batter=0):
-        self.inning = inning    # 0-8 (but in the real world, up to 16 innings have been played)
+        self.inning = inning
         self.balls = balls      # 0-3
         self.strikes = strikes  # 0-2
         self.num_runs = runs
@@ -52,7 +53,7 @@ class GameState:
         next_state = GameState(inning=self.inning, balls=self.balls, strikes=self.strikes, runs=self.num_runs,
                                outs=self.num_outs, first=self.first, second=self.second, third=self.third, batter=self.batter)
 
-        if next_state.inning >= 9 or next_state.num_runs >= GameState.max_runs:
+        if next_state.inning >= self.num_innings or next_state.num_runs >= GameState.max_runs:
             return next_state, 0
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
