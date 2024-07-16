@@ -94,7 +94,7 @@ def map_swing_outcome(idx: int, pitch: Pitch, bd: BaseballData):
                   torch.tensor(pitch.game_state.strikes, dtype=torch.float32),
                   torch.tensor(pitch.game_state.balls, dtype=torch.float32),
                   torch.tensor(pitch.game_state.num_runs, dtype=torch.float32),
-                  torch.tensor(pitch.game_state.num_outs, dtype=torch.float32),
+                  torch.tensor(pitch.game_state.outs, dtype=torch.float32),
                   torch.tensor(pitch.game_state.first, dtype=torch.float32),
                   torch.tensor(pitch.game_state.second, dtype=torch.float32),
                   torch.tensor(pitch.game_state.third, dtype=torch.float32)),

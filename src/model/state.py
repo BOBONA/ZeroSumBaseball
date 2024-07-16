@@ -33,31 +33,35 @@ class PitchResult(IntEnum):
 class GameState:
     """Represents the changing state of a game."""
 
-    __slots__ = ['inning', 'balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'batter']
+    __slots__ = ['inning', 'balls', 'strikes', 'num_runs', 'outs', 'first', 'second', 'third', 'batter']
 
     num_innings = 9  # Although in the real world, games can go into extra innings
+    num_balls = 4
+    num_strikes = 3
+    num_outs = 3
+    num_batters = 9
     max_runs = 9
 
     def __init__(self, inning=0, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, batter=0):
         self.inning = inning
-        self.balls = balls      # 0-3
-        self.strikes = strikes  # 0-2
+        self.balls = balls
+        self.strikes = strikes
         self.num_runs = runs
-        self.num_outs = outs    # 0-2
+        self.outs = outs
         self.first = first      # True if runner on first
         self.second = second    # True if runner on second
         self.third = third      # True if runner on third
-        self.batter = batter    # 0-8 (9 batters)
+        self.batter = batter
 
     def transition_from_pitch_result(self, result: PitchResult) -> tuple[Self, int]:
         next_state = GameState(inning=self.inning, balls=self.balls, strikes=self.strikes, runs=self.num_runs,
-                               outs=self.num_outs, first=self.first, second=self.second, third=self.third, batter=self.batter)
+                               outs=self.outs, first=self.first, second=self.second, third=self.third, batter=self.batter)
 
         if next_state.inning >= self.num_innings or next_state.num_runs >= GameState.max_runs:
             return next_state, 0
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
-                (result == PitchResult.SWINGING_FOUL and next_state.strikes < 3)):
+                (result == PitchResult.SWINGING_FOUL and next_state.strikes < GameState.num_strikes - 1)):
             next_state.strikes += 1
         elif result == PitchResult.CALLED_BALL:
             next_state.balls += 1
@@ -70,23 +74,23 @@ class GameState:
         elif result == PitchResult.HIT_HOME_RUN:
             next_state.move_batter(4)
         elif result == PitchResult.HIT_OUT:
-            next_state.num_outs += 1
+            next_state.outs += 1
             next_state.balls = next_state.strikes = 0
-            next_state.batter = (next_state.batter + 1) % 9
+            next_state.batter = (next_state.batter + 1) % self.num_batters
 
-        if next_state.balls == 4:  # Walk
+        if next_state.balls == self.num_balls:  # Walk
             next_state.move_batter(1)
-        if next_state.strikes == 3:
-            next_state.num_outs += 1
+        if next_state.strikes == self.num_strikes:
+            next_state.outs += 1
             next_state.balls = next_state.strikes = 0
-            next_state.batter = (next_state.batter + 1) % 9
+            next_state.batter = (next_state.batter + 1) % self.num_batters
 
         if next_state.num_runs > GameState.max_runs:
             next_state.num_runs = GameState.max_runs
 
-        if next_state.num_outs >= 3:
+        if next_state.outs >= self.num_outs:
             next_state.inning += 1
-            next_state.num_outs = 0
+            next_state.outs = 0
             next_state.first = next_state.second = next_state.third = False
 
         return next_state, next_state.num_runs - self.num_runs
@@ -113,7 +117,7 @@ class GameState:
             self.first = True
 
         self.balls = self.strikes = 0
-        self.batter = (self.batter + 1) % 9
+        self.batter = (self.batter + 1) % self.num_batters
 
     def value(self) -> int:
         """
@@ -124,11 +128,11 @@ class GameState:
         return self.num_runs
 
     def __repr__(self):
-        return (f"GameState(i{self.inning} b{self.batter}: {self.balls}/{self.strikes}, {self.num_runs}, {self.num_outs}, "
+        return (f"GameState(i{self.inning} b{self.batter}: {self.balls}/{self.strikes}, {self.num_runs}, {self.outs}, "
                 f"{'x' if self.first else '-'}{'x' if self.second else '-'}{'x' if self.third else '-'})")
 
     def __hash__(self):
-        return hash((self.inning, self.balls, self.strikes, self.num_outs, self.first, self.second, self.third, self.batter))
+        return hash((self.inning, self.balls, self.strikes, self.outs, self.first, self.second, self.third, self.batter))
 
     def __eq__(self, other):
         return hash(self) == hash(other)

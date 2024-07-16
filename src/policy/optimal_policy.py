@@ -1,4 +1,3 @@
-import random
 import warnings
 from collections import defaultdict
 from typing import Self
@@ -77,20 +76,20 @@ class PolicySolver:
 
         self.game_states: list[S] = [
             GameState(inning=inning, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
-            for inning in range(GameState.num_innings) for balls in range(4) for strikes in range(3) for outs in range(3)
-            for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(9)
+            for inning in range(GameState.num_innings) for balls in range(GameState.num_balls) for strikes in range(GameState.num_strikes) for outs in range(GameState.num_outs)
+            for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(GameState.num_batters)
         ]
 
         # Sort by "lateness" of the state, to optimize the value iteration algorithm
-        self.game_states.sort(key=lambda st: st.inning * 1000 + (st.num_outs + st.num_runs + st.batter) * 100 +
+        self.game_states.sort(key=lambda st: st.inning * 1000 + (st.outs + st.num_runs + st.batter) * 100 +
                                              (st.balls + st.strikes) * 10 + int(st.third) * 4 + int(st.second) * 2 +
                                              int(st.first), reverse=True)
 
         # Terminal states are stored separately for easier indexing
         self.final_states: list[S] = [
             GameState(inning=GameState.num_innings, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
-            for balls in range(4) for strikes in range(3) for outs in range(3)
-            for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(9)
+            for balls in range(GameState.num_balls) for strikes in range(GameState.num_strikes) for outs in range(GameState.num_outs)
+            for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(GameState.num_batters)
         ]
 
         self.total_states = self.game_states + self.final_states
@@ -101,6 +100,7 @@ class PolicySolver:
         self.policy_problem = None
         self.raw_values: list[float] | None = None
         self.raw_policy: PolicySolver.Policy | None = None
+        self.batter_permutation = None
 
     @classmethod
     def from_saved(cls, path: str, bd: BaseballData | None = None) -> Self:
@@ -194,7 +194,7 @@ class PolicySolver:
         assert PitchResult.CALLED_STRIKE == called_strike_i
 
         # Iterate over each state
-        # At the cost of readability, we use numpy operations to speed up the calculations
+        # At the cost of readability, we use numpy operations to speed up the calculations (if necessary, even the remaining for loops can be removed)
         for state_i, state in tqdm(enumerate(self.game_states), desc='Calculating transition distribution', total=len(self.game_states)):
             for action_i, action in enumerate(self.pitcher_actions):
                 pitch_type, intended_zone_i = action
@@ -267,7 +267,7 @@ class PolicySolver:
                 if state_i not in interested_states:
                     for pitch_i in range(len(self.pitcher_actions)):
                         state = self.game_states[state_i]
-                        interested_state = self.total_states_dict[GameState(balls=state.balls, strikes=state.strikes, outs=state.num_outs,
+                        interested_state = self.total_states_dict[GameState(balls=state.balls, strikes=state.strikes, outs=state.outs,
                                                                             first=state.first, second=state.second, third=state.third)]
                         pitch_type, zone_i = self.pitcher_actions[pitch_i]
                         swing_outcome[(pitcher_id, batter_id)][state_i, pitch_type, zone_i] = swing_outcome[(pitcher_id, batter_id)][interested_state, pitch_type, zone_i]
@@ -378,7 +378,7 @@ class PolicySolver:
                     for pitch_type_i in range(len(PitchType)):
                         for zone_i in range(len(default.BORDERLINE_ZONES)):
                             interested_state = self.total_states_dict[GameState(balls=self.game_states[state_i].balls, strikes=self.game_states[state_i].strikes,
-                                                                                outs=self.game_states[state_i].num_outs, first=self.game_states[state_i].first,
+                                                                                outs=self.game_states[state_i].outs, first=self.game_states[state_i].first,
                                                                                 second=self.game_states[state_i].second, third=self.game_states[state_i].third)]
                             batter_patience[batter_i][state_i, pitch_type_i, zone_i] = batter_patience[batter_i][interested_state, pitch_type_i, zone_i]
 
@@ -389,6 +389,14 @@ class PolicySolver:
         """Utility for default dict"""
     
         return 0, 0
+
+    def set_batter_permutation(self, batter_lineup_permutation: np.ndarray | None):
+        """
+        Without modifying the distributions, this method allows you to change the effective batter lineup
+        for the policy solver. The input should be a permutation of range(GameState.num_batters).
+        """
+
+        self.batter_permutation = batter_lineup_permutation
 
     def calculate_optimal_policy(self, print_difference: bool = False, use_ordered_iteration: bool = True,
                                  beta: float = 1e-3) -> tuple[Policy, list[float]]:
@@ -426,9 +434,8 @@ class PolicySolver:
             new_policy = np.zeros((len(self.total_states), len(self.pitcher_actions)))
             new_value = value.copy()
 
-            value_src = new_value if use_ordered_iteration else value  # Faster convergence with "ordered iteration"
+            value_src = new_value if use_ordered_iteration else value
 
-            # Note, this can be parallelized
             for state_i, state in tqdm(enumerate(self.game_states), f'Iterating over values, iter={iter_num}', total=len(self.game_states)):
                 # The expected value (transition reward + value of next states) for each action pair
                 action_quality = np.dot(self.transition_distribution[state_i], self.transitions[state_i, :, 1] + value_src[self.transitions[state_i, :, 0]])
@@ -504,7 +511,7 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
     # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
     solver = PolicySolver(bd, pitcher_id, batter_lineup)
-    solver.initialize_distributions(save_distributions=True, load_distributions=False)
+    solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=False)
     solver.calculate_optimal_policy(print_difference=True)
 
     print(f'ERA {solver.get_value()}')
@@ -514,20 +521,20 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
 
 def main(debug: bool = False):
     if not debug:
-        bd = BaseballData()
-        # bd = None
+        # bd = BaseballData()
+        bd = None
 
-        # The resulting ERA is highly dependent on the pitcher and batter chosen
+        # The resulting ERA is highly dependent on the pitchers and batters chosen
         # For these kinds of tests we only look at players with more appearances than min_obp_cutoff (167)
 
-        # Good pitcher, bad batter
-        good_bad_matchup = (666204, 462102)     # obp = 0.146, 0.049 -> ERA 0.005
+        # Back when we were only simulating one pitcher and batter for one inning:
+        good_bad_matchup = (666204, 462102)     # obp = 0.146, 0.049 -> ERA/9 0.005
         bad_good_matchup = (592464, 608061)     # obp = 0.367, 0.316 -> ERA 0.155
         good_good_matchup = (666204, 608061)    # obp = 0.146, 0.316 -> ERA 0.132
         bad_bad_matchup = (592464, 462102)      # obp = 0.367, 0.049 -> ERA 0.003
 
         # A Cardinals lineup (with Pedro Pages replaced because we don't have enough data for him)
-        full_matchup = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])
+        full_matchup = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])  # ERA 1.05
 
         test_era(bd, *full_matchup)
     else:
