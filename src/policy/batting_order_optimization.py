@@ -8,11 +8,13 @@ import torch
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData, save_blosc2
-from src.model.state import GameState
+from src.model.state import DebugRules, GameState
 from src.policy.optimal_policy import PolicySolver
 
 
 type Permutation = tuple[int, ...]
+
+rules = DebugRules
 
 
 def swap(perm: Permutation, i: int, j: int) -> Permutation:
@@ -25,6 +27,7 @@ class BattingOrderStrategy(ABC):
 
     def __init__(self):
         self.tries = dict()
+        self.steps = []
         self.best = None
 
     @abstractmethod
@@ -49,13 +52,15 @@ class BattingOrderStrategy(ABC):
 
         if not self.is_finished():
             policy_solver.set_batter_permutation(perm)
-            policy_solver.calculate_optimal_policy()
+            policy_solver.calculate_optimal_policy(use_last_values=True)
 
             # We can extract all permutations with the same cycle because of the symmetry of the problem
-            for i in range(GameState.num_batters):
+            for i in range(rules.num_batters):
                 value = policy_solver.get_value(GameState(batter=i))
                 cycle_perm = tuple(perm[i:] + perm[:i])
                 self.record_try(cycle_perm, value)
+
+            self.steps.append(self.best)
 
     def record_try(self, perm: Permutation, value: float):
         self.tries[perm] = value
@@ -69,13 +74,16 @@ class BattingOrderStrategy(ABC):
     def get_best(self) -> tuple[Permutation, float]:
         return self.best
 
+    def get_steps(self):
+        return self.steps
+
 
 class BruteForce(BattingOrderStrategy):
     """Run through all permutations of the batting order"""
 
     def __init__(self):
         super().__init__()
-        self.perm = itertools.permutations(range(GameState.num_batters))
+        self.perm = itertools.permutations(range(rules.num_batters))
         self.next = next(self.perm)
 
     def get_next_permutation(self) -> Permutation:
@@ -92,10 +100,10 @@ class Random(BattingOrderStrategy):
 
     def __init__(self):
         super().__init__()
-        self.size = math.factorial(GameState.num_batters)
+        self.size = math.factorial(rules.num_batters)
 
     def get_next_permutation(self) -> Permutation:
-        perm = list(range(GameState.num_batters))
+        perm = list(range(rules.num_batters))
         while not self.is_finished() or tuple(perm) in self.tries:
             random.shuffle(perm)
         return tuple(perm)
@@ -109,7 +117,7 @@ class OneByOne(BattingOrderStrategy):
 
     def __init__(self):
         super().__init__()
-        self.perm = tuple(range(GameState.num_batters))
+        self.perm = tuple(range(rules.num_batters))
         self.considering_batter = 0
         self.batter_choices = []
 
@@ -117,7 +125,7 @@ class OneByOne(BattingOrderStrategy):
         perm = swap(self.perm, self.considering_batter, self.considering_batter + len(self.batter_choices))
         self.batter_choices.append(perm)
 
-        if len(self.batter_choices) == GameState.num_batters - self.considering_batter:
+        if len(self.batter_choices) == rules.num_batters - self.considering_batter:
             self.perm = max(self.batter_choices, key=lambda x: self.tries[x])
             self.considering_batter += 1
             self.batter_choices = []
@@ -125,7 +133,7 @@ class OneByOne(BattingOrderStrategy):
         return perm
 
     def is_finished(self):
-        return self.considering_batter >= GameState.num_batters - 1
+        return self.considering_batter >= rules.num_batters - 1
 
     def get_solution(self) -> tuple[Permutation, float]:
         return self.perm, self.tries[self.perm]
@@ -136,9 +144,9 @@ class GreedyHillClimbing(BattingOrderStrategy):
 
     def __init__(self):
         super().__init__()
-        self.possible_swaps = list(itertools.combinations(range(GameState.num_batters), 2))
+        self.possible_swaps = list(itertools.combinations(range(rules.num_batters), 2))
         self.swap_index = 0
-        self.current_perm = tuple(range(GameState.num_batters))
+        self.current_perm = tuple(range(rules.num_batters))
 
     def get_next_permutation(self) -> Permutation:
         if self.get_best() is not None and self.get_best() != self.current_perm:
@@ -190,23 +198,36 @@ def seed():
 
 
 def main():
-    bd = BaseballData()
+    # bd = BaseballData()
+    bd = None
     test_match = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])  # ERA 1.05
 
     seed()
-    policy_solver = PolicySolver(bd, *test_match)
-    policy_solver.initialize_distributions()
+    policy_solver = PolicySolver(bd, *test_match, rules=DebugRules)
+    policy_solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True)
 
     strategy = BruteForce()
-    with tqdm(total=math.factorial(GameState.num_batters)) as pbar:
+    with tqdm(total=math.factorial(DebugRules.num_batters - 1)) as pbar:
         while not strategy.is_finished():
             strategy.step(policy_solver)
             pbar.update(1)
 
     save_blosc2(strategy, 'brute_force.blosc2')
 
-    print('Starting permutation:', strategy.get_tries()[tuple(range(GameState.num_batters))])
+    print('Starting permutation:', strategy.get_tries()[tuple(range(DebugRules.num_batters))])
     print('Best permutation:', strategy.get_best())
+
+    graph_strategy(strategy)
+
+
+def graph_strategy(strategy: BattingOrderStrategy):
+    import matplotlib.pyplot as plt
+
+    steps = [x[1] for x in strategy.get_steps()]
+    x = list(range(1, len(steps)))
+    y = [max(steps[0:i]) for i in x]
+    plt.plot(x, y)
+    plt.show()
 
 
 if __name__ == '__main__':

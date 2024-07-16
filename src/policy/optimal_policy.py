@@ -1,3 +1,4 @@
+import copy
 import warnings
 from collections import defaultdict
 from typing import Self
@@ -20,7 +21,7 @@ from src.data.datasets import SwingResult, PitchDataset, PitchControlDataset
 from src.distributions.batter_patience import BatterSwings, batter_patience_map
 from src.distributions.pitcher_control import PitcherControl
 from src.distributions.swing_outcome import SwingOutcome, map_swing_outcome
-from src.model.state import GameState, PitchResult
+from src.model.state import GameState, PitchResult, Rules
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.zones import default
@@ -58,7 +59,7 @@ class PolicySolver:
 
     default_batch: int = 512
 
-    def __init__(self, bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
+    def __init__(self, bd: BaseballData, pitcher_id: int, batter_lineup: list[int], rules: type[Rules] = Rules):
         """
         Initializes the policy solver with the given pitcher and batter, and some optional parameters.
         This does not do any actual calculations, but sets up the necessary data structures and config.
@@ -74,33 +75,37 @@ class PolicySolver:
         self.pitcher_actions: list[A] = [(pitch_type, zone_i) for zone_i in range(len(default.ZONES)) for pitch_type in PitchType]
         self.batter_actions: list[O] = [False, True]  # Order is important!
 
+        third_options = [False, True] if not rules.two_base_game else [False]
+
         self.game_states: list[S] = [
             GameState(inning=inning, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
-            for inning in range(GameState.num_innings) for balls in range(GameState.num_balls) for strikes in range(GameState.num_strikes) for outs in range(GameState.num_outs)
-            for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(GameState.num_batters)
+            for inning in range(rules.num_innings) for balls in range(rules.num_balls) for strikes in range(rules.num_strikes) for outs in range(rules.num_outs)
+            for first in [False, True] for second in [False, True] for third in third_options for batter in range(rules.num_batters)
         ]
 
         # Sort by "lateness" of the state, to optimize the value iteration algorithm
-        self.game_states.sort(key=lambda st: st.inning * 1000 + (st.outs + st.num_runs + st.batter) * 100 +
+        self.game_states.sort(key=lambda st: st.inning * 1000 + (st.num_outs + st.num_runs) * 100 +
                                              (st.balls + st.strikes) * 10 + int(st.third) * 4 + int(st.second) * 2 +
                                              int(st.first), reverse=True)
 
         # Terminal states are stored separately for easier indexing
         self.final_states: list[S] = [
-            GameState(inning=GameState.num_innings, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
-            for balls in range(GameState.num_balls) for strikes in range(GameState.num_strikes) for outs in range(GameState.num_outs)
-            for first in [False, True] for second in [False, True] for third in [False, True] for batter in range(GameState.num_batters)
+            GameState(inning=rules.num_innings, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
+            for balls in range(rules.num_balls) for strikes in range(rules.num_strikes) for outs in range(rules.num_outs)
+            for first in [False, True] for second in [False, True] for third in third_options for batter in range(rules.num_batters)
         ]
 
         self.total_states = self.game_states + self.final_states
         self.total_states_dict = {state: i for i, state in enumerate(self.total_states)}
+
+        self.rules = rules
 
         self.transitions = None
         self.transition_distribution = None
         self.policy_problem = None
         self.raw_values: list[float] | None = None
         self.raw_policy: PolicySolver.Policy | None = None
-        self.batter_permutation = None
+        self.permuted_transitions = None
 
     @classmethod
     def from_saved(cls, path: str, bd: BaseballData | None = None) -> Self:
@@ -111,11 +116,10 @@ class PolicySolver:
         return solver
 
     def save(self, path: str):
-        """This method deletes references to self.bd and self.policy_problem before saving, to avoid pickling issues"""
-
-        self.bd = None  # We don't want to save the BaseballData object
-        self.policy_problem = None
         save_blosc2(self, path)
+
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items() if k not in ['bd', 'policy_problem']}
 
     def initialize_distributions(self, batch_size: int = default_batch, save_distributions: bool = False,
                                  load_distributions: bool = False, load_transition: bool = False):
@@ -173,13 +177,14 @@ class PolicySolver:
 
         # Since a state can only transition to a limited number of states, we're able to store the transition indexes in
         # a fixed size array. Empty transitions are padded with (-1, 0)
-        transitions = np.asarray([pad([map_t(state.transition_from_pitch_result(result)) for result in PitchResult]) for state in self.game_states], dtype=np.int32)
+        transitions = np.asarray([pad([map_t(state.transition_from_pitch_result(result, rules=self.rules))
+                                       for result in PitchResult]) for state in self.game_states], dtype=np.int32)
         probabilities = np.zeros((len(self.game_states), len(self.pitcher_actions), len(self.batter_actions), self.max_transitions), dtype=np.float32)
 
         # Used to transform swing outcome probabilities to transition probabilities. A matrix like this is necessary since
         # multiple swing outcomes can lead to the same state
         swing_to_transition_matrix = np.asarray([
-            np.asarray([transitions[state_i, :, 0] == self.total_states_dict[self.total_states[state_i].transition_from_pitch_result(result.to_pitch_result())[0]]
+            np.asarray([transitions[state_i, :, 0] == self.total_states_dict[self.total_states[state_i].transition_from_pitch_result(result.to_pitch_result(), rules=self.rules)[0]]
                         for result in SwingResult]).transpose()
             for state_i in range(len(self.game_states))
         ])
@@ -236,9 +241,10 @@ class PolicySolver:
         swing_outcome = {}
 
         # We only care about calculating the results for states that are unique to the model (which does not consider every variable)
+        third_options = [False, True] if not self.rules.two_base_game else [False]
         interested_states = [self.total_states_dict[GameState(balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third)]
-                             for balls in range(4) for strikes in range(3) for outs in range(3)
-                             for first in [False, True] for second in [False, True] for third in [False, True]]
+                             for balls in range(self.rules.num_balls) for strikes in range(self.rules.num_strikes) for outs in range(self.rules.num_outs)
+                             for first in [False, True] for second in [False, True] for third in third_options]
         interested_pitches = [(state_i, pitch_i) for state_i in interested_states for pitch_i in range(len(self.pitcher_actions))]
 
         for pitcher_id, batter_id in tqdm(matchups, desc='Calculating swing outcomes'):
@@ -267,7 +273,7 @@ class PolicySolver:
                 if state_i not in interested_states:
                     for pitch_i in range(len(self.pitcher_actions)):
                         state = self.game_states[state_i]
-                        interested_state = self.total_states_dict[GameState(balls=state.balls, strikes=state.strikes, outs=state.outs,
+                        interested_state = self.total_states_dict[GameState(balls=state.balls, strikes=state.strikes, outs=state.num_outs,
                                                                             first=state.first, second=state.second, third=state.third)]
                         pitch_type, zone_i = self.pitcher_actions[pitch_i]
                         swing_outcome[(pitcher_id, batter_id)][state_i, pitch_type, zone_i] = swing_outcome[(pitcher_id, batter_id)][interested_state, pitch_type, zone_i]
@@ -345,9 +351,10 @@ class PolicySolver:
         batter_patience_model.eval()
 
         # We only care about calculating the results for states that are unique to the model (which does not consider every variable)
+        third_options = [False, True] if not self.rules.two_base_game else [False]
         interested_states = [self.total_states_dict[GameState(balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third)]
-                             for balls in range(4) for strikes in range(3) for outs in range(3)
-                             for first in [False, True] for second in [False, True] for third in [False, True]]
+                             for balls in range(self.rules.num_balls) for strikes in range(self.rules.num_strikes) for outs in range(self.rules.num_outs)
+                             for first in [False, True] for second in [False, True] for third in third_options]
         interested_pitches = [(state_i, type_i, borderline_zone_i) for state_i in interested_states
                               for type_i in range(len(PitchType)) for borderline_zone_i in range(len(default.BORDERLINE_ZONES))]
 
@@ -378,7 +385,7 @@ class PolicySolver:
                     for pitch_type_i in range(len(PitchType)):
                         for zone_i in range(len(default.BORDERLINE_ZONES)):
                             interested_state = self.total_states_dict[GameState(balls=self.game_states[state_i].balls, strikes=self.game_states[state_i].strikes,
-                                                                                outs=self.game_states[state_i].outs, first=self.game_states[state_i].first,
+                                                                                outs=self.game_states[state_i].num_outs, first=self.game_states[state_i].first,
                                                                                 second=self.game_states[state_i].second, third=self.game_states[state_i].third)]
                             batter_patience[batter_i][state_i, pitch_type_i, zone_i] = batter_patience[batter_i][interested_state, pitch_type_i, zone_i]
 
@@ -396,10 +403,26 @@ class PolicySolver:
         for the policy solver. The input should be a permutation of range(GameState.num_batters).
         """
 
-        self.batter_permutation = batter_lineup_permutation
+        if batter_lineup_permutation is None:
+            self.permuted_transitions = None
+            return
 
-    def calculate_optimal_policy(self, print_difference: bool = False, use_ordered_iteration: bool = True,
-                                 beta: float = 1e-3) -> tuple[Policy, list[float]]:
+        batter_lineup_permutation = list(batter_lineup_permutation)
+        self.permuted_transitions = self.transitions.copy()
+        for state_i, state in enumerate(self.game_states):
+            transitions = self.permuted_transitions[state_i, :, 0]
+            for idx, transition_i in enumerate(transitions):
+                transition = self.total_states[transition_i]
+
+                # If the transition goes to a new batter, we override it with the next batter in the permutation
+                if transition.batter != state.batter:
+                    transition = copy.copy(transition)
+                    current_batter_i = batter_lineup_permutation.index(state.batter)
+                    transition.batter = batter_lineup_permutation[(current_batter_i + 1) % self.rules.num_batters]
+                    transitions[idx] = self.total_states_dict[transition]
+
+    def calculate_optimal_policy(self, print_output: bool = False, use_ordered_iteration: bool = True,
+                                 beta: float = 1e-3, use_last_values: bool = False) -> tuple[Policy, list[float]]:
         """
         Uses value iteration algorithm to calculate the optimal policy for our model, given
         the pitcher and batter. https://doi.org/10.1016/B978-1-55860-335-6.50027-1
@@ -407,9 +430,10 @@ class PolicySolver:
         A policy (or mixed strategy) defines a probability distribution over actions for each state for
         the pitcher.
 
-        :param print_difference: This flag prints the difference between iterations, useful for debugging
+        :param print_output: This flag prints the difference between iterations and keeps a progress bar
         :param use_ordered_iteration: This is a flag that improves the convergence by calculating states with the values of the current iteration
         :param beta: The minimum change in value to continue iterating
+        :param use_last_values: If True, the last calculated values are used as the initial values for this run, which can speed up convergence by 50%
         :return: The optimal pitcher policy, assigning a probability to each action in each state and the value of each state.
             These structures are indexed according to the lists defined in the class, but methods are provided to view the data more easily.
             You can ignore the return value and use get_value or get_policy instead.
@@ -417,7 +441,8 @@ class PolicySolver:
 
         # Stores the "value" of each state, indexed according to total_states
         # Last time I measured, random initialization in this manner converged 1/3 faster
-        value = np.concatenate((np.random.rand(len(self.game_states)), np.zeros(len(self.final_states))))
+        value = self.raw_values if self.raw_values is not None and use_last_values else (
+            np.concatenate((np.random.rand(len(self.game_states)), np.zeros(len(self.final_states)))))
 
         # Stores the policy for each state, indexed according to game_states
         policy: PolicySolver.Policy = np.ones((len(self.game_states), len(self.pitcher_actions))) / len(self.pitcher_actions)
@@ -435,10 +460,13 @@ class PolicySolver:
             new_value = value.copy()
 
             value_src = new_value if use_ordered_iteration else value
+            transitions_src = self.transitions if self.permuted_transitions is None else self.permuted_transitions
 
-            for state_i, state in tqdm(enumerate(self.game_states), f'Iterating over values, iter={iter_num}', total=len(self.game_states)):
+            for state_i, state in tqdm(enumerate(self.game_states), f'Iterating over values, iter={iter_num}',
+                                       total=len(self.game_states), disable=not print_output):
                 # The expected value (transition reward + value of next states) for each action pair
-                action_quality = np.dot(self.transition_distribution[state_i], self.transitions[state_i, :, 1] + value_src[self.transitions[state_i, :, 0]])
+                transitions, rewards = transitions_src[state_i].transpose()
+                action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
                 new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
 
             # Update values
@@ -446,7 +474,7 @@ class PolicySolver:
             policy = new_policy
             value = new_value
 
-            if print_difference:
+            if print_output:
                 print(difference)
 
         self.raw_values = value
@@ -511,10 +539,13 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
     # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
     solver = PolicySolver(bd, pitcher_id, batter_lineup)
-    solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=False)
-    solver.calculate_optimal_policy(print_difference=True)
+    solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True)
+    solver.calculate_optimal_policy(print_output=True)
 
     print(f'ERA {solver.get_value()}')
+
+    for i in range(Rules.num_batters):
+        print(f'ERA{i} {solver.get_value(GameState(batter=i))}')
 
     solver.save('solved_policy.blosc2')
 

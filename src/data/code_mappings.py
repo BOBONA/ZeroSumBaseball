@@ -80,7 +80,7 @@ at_bat_event_mapping = {
     'strikeout': None,
     'strikeout_double_play': None,
 
-    # Different plays that result in outs
+    # Different plays that result in num_outs
     'double_play': PitchResult.HIT_OUT,
     'triple_play': PitchResult.HIT_OUT,
 

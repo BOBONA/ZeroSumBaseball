@@ -38,8 +38,9 @@ aim for a borderline zone and can only aim for 5x5 centers.
 ## TODO
 - Test strategies for optimizing batter selection
 
-  - Fix one at a time
-  - (Stochastic) hill climbing
-  - Simulated annealing?
-
 - Incorporate a distribution for on-field outcomes. We can start with the empirical distribution
+
+- Improve the value iteration algorithm to converge faster. Specifically, I'm looking at the way that cycles
+  slow down convergence. I imagine something has been written about this. A simple solution might be to iterate over
+  states with two strikes (which cycle back to themselves through fouls) more times. Maybe we could develop a general
+  solution for this.
