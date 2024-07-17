@@ -36,11 +36,14 @@ the batter's intentions, which seems difficult.
 aim for a borderline zone and can only aim for 5x5 centers.
 
 ## TODO
+- Finish the poster. Clean up the code. Make a write-up.
+
 - Test strategies for optimizing batter selection
 
 - Incorporate a distribution for on-field outcomes. We can start with the empirical distribution
 
 - Improve the value iteration algorithm to converge faster. Specifically, I'm looking at the way that cycles
-  slow down convergence. I imagine something has been written about this. A simple solution might be to iterate over
-  states with two strikes (which cycle back to themselves through fouls) more times. Maybe we could develop a general
-  solution for this.
+  slow down convergence. A simple solution might be to iterate over states with two strikes (which cycle back to 
+  themselves through fouls) more times. Maybe we could develop a general solution for this. Or it might be I don't need
+  to iterate more times, but simply start with those states first.
+

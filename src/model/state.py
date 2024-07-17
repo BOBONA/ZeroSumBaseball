@@ -49,7 +49,7 @@ class DebugRules(Rules):
     num_balls = 3
     num_strikes = 2
     num_outs = 2
-    num_batters = 6
+    num_batters = 9
 
     fouls_end_inning = False  # This sometimes speeds up convergence significantly
     two_base_game = True  # This is a game with only two bases
@@ -60,8 +60,7 @@ class GameState:
 
     __slots__ = ['inning', 'balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'batter']
 
-    def __init__(self, inning=0, balls=0, strikes=0, runs=0, outs=0,
-                 first=False, second=False, third=False, batter=0):
+    def __init__(self, inning=0, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, batter=0):
         self.inning = inning
         self.balls = balls
         self.strikes = strikes

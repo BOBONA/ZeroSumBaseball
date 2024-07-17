@@ -1,4 +1,5 @@
 import copy
+import random
 import warnings
 from collections import defaultdict
 from typing import Self
@@ -21,7 +22,7 @@ from src.data.datasets import SwingResult, PitchDataset, PitchControlDataset
 from src.distributions.batter_patience import BatterSwings, batter_patience_map
 from src.distributions.pitcher_control import PitcherControl
 from src.distributions.swing_outcome import SwingOutcome, map_swing_outcome
-from src.model.state import GameState, PitchResult, Rules
+from src.model.state import GameState, PitchResult, Rules, DebugRules
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.zones import default
@@ -535,14 +536,22 @@ class PolicySolver:
         return optimal_policy
 
 
-def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
+def seed():
+    torch.manual_seed(1)
+    np.random.seed(1)
+    random.seed(1)
+
+
+def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int], load=False, batter_permutation=None):
     # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
-    solver = PolicySolver(bd, pitcher_id, batter_lineup)
-    solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True)
-    solver.calculate_optimal_policy(print_output=True)
+    solver = PolicySolver(bd, pitcher_id, batter_lineup, rules=DebugRules)
+    solver.initialize_distributions(save_distributions=True, load_distributions=load, load_transition=load)
+    solver.set_batter_permutation(batter_permutation)
+    solver.calculate_optimal_policy(print_output=True, beta=1e-4)
 
-    print(f'ERA {solver.get_value()}')
+    first_batter = 0 if batter_permutation is None else batter_permutation[0]
+    print(f'ERA {solver.get_value(GameState(batter=first_batter))}\n')
 
     for i in range(Rules.num_batters):
         print(f'ERA{i} {solver.get_value(GameState(batter=i))}')
@@ -550,10 +559,11 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int]):
     solver.save('solved_policy.blosc2')
 
 
-def main(debug: bool = False):
+def main(debug: bool = False, load=False):
     if not debug:
-        # bd = BaseballData()
         bd = None
+        if not load:
+            bd = BaseballData()
 
         # The resulting ERA is highly dependent on the pitchers and batters chosen
         # For these kinds of tests we only look at players with more appearances than min_obp_cutoff (167)
@@ -567,7 +577,10 @@ def main(debug: bool = False):
         # A Cardinals lineup (with Pedro Pages replaced because we don't have enough data for him)
         full_matchup = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])  # ERA 1.05
 
-        test_era(bd, *full_matchup)
+        full_matchup = (666204, [571448, 502671, 676475, 680977, 575929, 691026])
+
+        # test_era(bd, *full_matchup, load=load, batter_permutation=[0, 2, 3, 1, 4])
+        test_era(bd, *full_matchup, load=load, batter_permutation=None)
     else:
         # distributions = load_blosc2('distributions.blosc2')
         transition_distribution = load_blosc2('transition_distribution.blosc2')
@@ -578,4 +591,5 @@ def main(debug: bool = False):
 
 
 if __name__ == '__main__':
+    seed()
     main(debug=False)

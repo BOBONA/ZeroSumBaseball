@@ -1,15 +1,16 @@
 import itertools
 import math
+import multiprocessing
 import random
+import threading
+import time
 from abc import ABC, abstractmethod
 
-import numpy as np
-import torch
 from tqdm import tqdm
 
-from src.data.data_loading import BaseballData, save_blosc2
+from src.data.data_loading import BaseballData, save_blosc2, load_blosc2
 from src.model.state import DebugRules, GameState
-from src.policy.optimal_policy import PolicySolver
+from src.policy.optimal_policy import PolicySolver, seed
 
 
 type Permutation = tuple[int, ...]
@@ -52,12 +53,13 @@ class BattingOrderStrategy(ABC):
 
         if not self.is_finished():
             policy_solver.set_batter_permutation(perm)
-            policy_solver.calculate_optimal_policy(use_last_values=True)
+            policy_solver.calculate_optimal_policy(beta=2e-4, use_last_values=True)
 
             # We can extract all permutations with the same cycle because of the symmetry of the problem
             for i in range(rules.num_batters):
                 value = policy_solver.get_value(GameState(batter=i))
-                cycle_perm = tuple(perm[i:] + perm[:i])
+                idx = perm.index(i)
+                cycle_perm = tuple(perm[idx:] + perm[:idx])
                 self.record_try(cycle_perm, value)
 
             self.steps.append(self.best)
@@ -74,7 +76,7 @@ class BattingOrderStrategy(ABC):
     def get_best(self) -> tuple[Permutation, float]:
         return self.best
 
-    def get_steps(self):
+    def get_steps(self) -> list[tuple[Permutation, float]]:
         return self.steps
 
 
@@ -104,7 +106,7 @@ class Random(BattingOrderStrategy):
 
     def get_next_permutation(self) -> Permutation:
         perm = list(range(rules.num_batters))
-        while not self.is_finished() or tuple(perm) in self.tries:
+        while not self.is_finished() and tuple(perm) in self.tries:
             random.shuffle(perm)
         return tuple(perm)
 
@@ -122,13 +124,13 @@ class OneByOne(BattingOrderStrategy):
         self.batter_choices = []
 
     def get_next_permutation(self) -> Permutation:
-        perm = swap(self.perm, self.considering_batter, self.considering_batter + len(self.batter_choices))
-        self.batter_choices.append(perm)
-
         if len(self.batter_choices) == rules.num_batters - self.considering_batter:
             self.perm = max(self.batter_choices, key=lambda x: self.tries[x])
             self.considering_batter += 1
             self.batter_choices = []
+
+        perm = swap(self.perm, self.considering_batter, self.considering_batter + len(self.batter_choices))
+        self.batter_choices.append(perm)
 
         return perm
 
@@ -149,7 +151,7 @@ class GreedyHillClimbing(BattingOrderStrategy):
         self.current_perm = tuple(range(rules.num_batters))
 
     def get_next_permutation(self) -> Permutation:
-        if self.get_best() is not None and self.get_best() != self.current_perm:
+        if self.get_best() is not None and self.get_best()[0] != self.current_perm:
             self.current_perm = self.get_best()[0]
             self.swap_index = 0
 
@@ -191,30 +193,59 @@ class SamplingHillClimbing(BattingOrderStrategy):
         pass
 
 
-def seed():
-    torch.manual_seed(0)
-    np.random.seed(0)
-    random.seed(0)
-
-
-def main():
-    # bd = BaseballData()
-    bd = None
-    test_match = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])  # ERA 1.05
-
-    seed()
-    policy_solver = PolicySolver(bd, *test_match, rules=DebugRules)
+def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, i: int = 0):
+    policy_solver = PolicySolver(None, *match, rules=DebugRules)
     policy_solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True)
 
-    strategy = BruteForce()
-    with tqdm(total=math.factorial(DebugRules.num_batters - 1)) as pbar:
-        while not strategy.is_finished():
-            strategy.step(policy_solver)
-            pbar.update(1)
+    for step in range(k):
+        start = time.time()
+        strategy.step(policy_solver)
+        end = time.time()
 
-    save_blosc2(strategy, 'brute_force.blosc2')
+        if step % 10 == 9:
+            print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
 
-    print('Starting permutation:', strategy.get_tries()[tuple(range(DebugRules.num_batters))])
+    save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/{i}.blosc2')
+    graph_strategy(strategy)
+
+
+def test_strategies():
+    strategies = [BruteForce, Random, OneByOne, GreedyHillClimbing]
+    k = 40
+    num_matches = 1
+    matches = load_blosc2('matches.blosc2')
+
+    bd = BaseballData()
+    for i in range(num_matches):
+        match = matches[i]
+        PolicySolver(bd, *match, rules=DebugRules).initialize_distributions(save_distributions=True)
+
+        threads = []
+        for strategy in strategies:
+            strat = strategy()
+            thread = multiprocessing.Process(target=test_strategy, args=(strat, match, k, i))
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+
+def test():
+    bd = BaseballData()
+    test_match = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])
+
+    policy_solver = PolicySolver(bd, *test_match, rules=DebugRules)
+    policy_solver.initialize_distributions(save_distributions=True)
+
+    strategy = GreedyHillClimbing()
+    k = 40
+    for _ in tqdm(range(k)):
+        strategy.step(policy_solver)
+
+    save_blosc2(strategy, 'greedy.blosc2')
+
+    print('Starting permutation:', list(strategy.get_tries().keys())[0])
     print('Best permutation:', strategy.get_best())
 
     graph_strategy(strategy)
@@ -230,5 +261,21 @@ def graph_strategy(strategy: BattingOrderStrategy):
     plt.show()
 
 
+def generate_matches():
+    """It's nice to have a fixed set of matches instead of generating them every time"""
+
+    bd = BaseballData()
+    num_matches = 1000
+    matches = []
+
+    for _ in range(num_matches):
+        pitcher = random.choice(sorted(bd.pitchers))
+        batters = random.sample(sorted(bd.batters), DebugRules.num_batters)
+        matches.append((pitcher, batters))
+
+    save_blosc2(matches, 'matches.blosc2')
+
+
 if __name__ == '__main__':
-    main()
+    seed()
+    test_strategies()
