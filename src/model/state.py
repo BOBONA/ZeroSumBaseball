@@ -45,13 +45,15 @@ class Rules:
 
 
 class DebugRules(Rules):
+    """Here's a set of rules with much less game states"""
+
     num_innings = 3
     num_balls = 3
     num_strikes = 2
     num_outs = 2
     num_batters = 9
 
-    fouls_end_inning = False  # This sometimes speeds up convergence significantly
+    fouls_end_inning = True  # This speeds up convergence significantly
     two_base_game = True  # This is a game with only two bases
 
 

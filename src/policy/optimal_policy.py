@@ -84,11 +84,6 @@ class PolicySolver:
             for first in [False, True] for second in [False, True] for third in third_options for batter in range(rules.num_batters)
         ]
 
-        # Sort by "lateness" of the state, to optimize the value iteration algorithm
-        self.game_states.sort(key=lambda st: st.inning * 1000 + (st.num_outs + st.num_runs) * 100 +
-                                             (st.balls + st.strikes) * 10 + int(st.third) * 4 + int(st.second) * 2 +
-                                             int(st.first), reverse=True)
-
         # Terminal states are stored separately for easier indexing
         self.final_states: list[S] = [
             GameState(inning=rules.num_innings, balls=balls, strikes=strikes, outs=outs, first=first, second=second, third=third, batter=batter)
@@ -103,9 +98,13 @@ class PolicySolver:
 
         self.transitions = None
         self.transition_distribution = None
+
         self.policy_problem = None
+        self.num_programs = 0
         self.raw_values: list[float] | None = None
         self.raw_policy: PolicySolver.Policy | None = None
+
+        self.batter_lineup_permutation = range(rules.num_batters)
         self.permuted_transitions = None
 
     @classmethod
@@ -408,7 +407,7 @@ class PolicySolver:
             self.permuted_transitions = None
             return
 
-        batter_lineup_permutation = list(batter_lineup_permutation)
+        self.batter_lineup_permutation = list(batter_lineup_permutation)
         self.permuted_transitions = self.transitions.copy()
         for state_i, state in enumerate(self.game_states):
             transitions = self.permuted_transitions[state_i, :, 0]
@@ -451,37 +450,56 @@ class PolicySolver:
         if self.transition_distribution is None:
             self.initialize_distributions()
 
+        # Instead of optimizing all states at once, we can do one inning at a time
+        # This is because the values of a later inning are completely independent of the values of an earlier inning
+        for inning in tqdm(reversed(range(self.rules.num_innings)), total=self.rules.num_innings, desc='Optimizing innings', disable=not print_output):
+            states = [state_i for state_i, state in enumerate(self.game_states) if state.inning == inning]
+
+            # Sort by "lateness" of the state, to speed up convergence
+            # We sort in order to keep at-bats together
+            states.sort(key=lambda st: ((self.game_states[st].num_outs + self.batter_lineup_permutation.index(self.game_states[st].batter)) * 10 +
+                                        int(self.game_states[st].third) * 4 + int(self.game_states[st].second) * 2 + int(self.game_states[st].first),
+                                        self.game_states[st].balls + self.game_states[st].strikes), reverse=True)
+
+            self.optimize_inning(states, value, policy, beta, use_ordered_iteration, print_output=False)
+
+        self.raw_values = value
+        self.raw_policy = policy
+
+        return policy, value
+
+    def optimize_inning(self, states: list[int], value: np.ndarray, policy: np.ndarray, beta: float, use_ordered_iteration: bool, print_output: bool):
         difference = float('inf')
         iter_num = 0
         while difference > beta:
             iter_num += 1
 
             # Independently optimize the policy for each state
-            new_policy = np.zeros((len(self.total_states), len(self.pitcher_actions)))
+            new_policy = np.zeros((len(self.game_states), len(self.pitcher_actions)))
             new_value = value.copy()
 
             value_src = new_value if use_ordered_iteration else value
             transitions_src = self.transitions if self.permuted_transitions is None else self.permuted_transitions
 
-            for state_i, state in tqdm(enumerate(self.game_states), f'Iterating over values, iter={iter_num}',
-                                       total=len(self.game_states), disable=not print_output):
+            for state_i in tqdm(states, f'Iterating over values, iter={iter_num}', total=len(states), disable=not print_output):
                 # The expected value (transition reward + value of next states) for each action pair
                 transitions, rewards = transitions_src[state_i].transpose()
                 action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
                 new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
 
+                # Running an additional iteration on two strike states (which are self-loops when there's a foul)
+                # seems to help a bit, but still converges much slower than when fouls do end an inning
+                if self.total_states[state_i].strikes == self.rules.num_strikes - 1 and not self.rules.fouls_end_inning:
+                    action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
+                    new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
+
             # Update values
             difference = np.abs(new_value - value).max()
-            policy = new_policy
-            value = new_value
+            policy[:] = new_policy
+            value[:] = new_value
 
             if print_output:
                 print(difference)
-
-        self.raw_values = value
-        self.raw_policy = policy
-
-        return policy, value
 
     def initialize_policy_problem(self, max_pitch_percentage: float = 0.7):
         """We only need to initialize the policy problem once, as the constraints always the same"""
@@ -505,6 +523,8 @@ class PolicySolver:
 
         if self.policy_problem is None:
             self.initialize_policy_problem()
+
+        self.num_programs += 1
 
         policy, action_quality_param, problem = self.policy_problem
         for o in range(len(self.batter_actions)):
@@ -537,29 +557,32 @@ class PolicySolver:
 
 
 def seed():
-    torch.manual_seed(1)
-    np.random.seed(1)
-    random.seed(1)
+    """
+    There's a bit of randomness in the distribution calculations, most likely from the way
+    we're sampling with the pitcher control model. You can use this function to seed the randomness.
+    """
+
+    torch.manual_seed(0)
+    np.random.seed(0)
+    random.seed(0)
 
 
 def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int], load=False, batter_permutation=None):
     # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
-    solver = PolicySolver(bd, pitcher_id, batter_lineup, rules=DebugRules)
+    solver = PolicySolver(bd, pitcher_id, batter_lineup, rules=Rules)
     solver.initialize_distributions(save_distributions=True, load_distributions=load, load_transition=load)
     solver.set_batter_permutation(batter_permutation)
-    solver.calculate_optimal_policy(print_output=True, beta=1e-4)
+    solver.calculate_optimal_policy(print_output=True, beta=2e-4)
 
     first_batter = 0 if batter_permutation is None else batter_permutation[0]
     print(f'ERA {solver.get_value(GameState(batter=first_batter))}\n')
-
-    for i in range(Rules.num_batters):
-        print(f'ERA{i} {solver.get_value(GameState(batter=i))}')
+    print(f'Solved in {solver.num_programs} programs')
 
     solver.save('solved_policy.blosc2')
 
 
-def main(debug: bool = False, load=False):
+def main(debug: bool = False, load=True):
     if not debug:
         bd = None
         if not load:
@@ -577,10 +600,7 @@ def main(debug: bool = False, load=False):
         # A Cardinals lineup (with Pedro Pages replaced because we don't have enough data for him)
         full_matchup = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])  # ERA 1.05
 
-        full_matchup = (666204, [571448, 502671, 676475, 680977, 575929, 691026])
-
-        # test_era(bd, *full_matchup, load=load, batter_permutation=[0, 2, 3, 1, 4])
-        test_era(bd, *full_matchup, load=load, batter_permutation=None)
+        test_era(bd, *full_matchup, load=load)
     else:
         # distributions = load_blosc2('distributions.blosc2')
         transition_distribution = load_blosc2('transition_distribution.blosc2')
