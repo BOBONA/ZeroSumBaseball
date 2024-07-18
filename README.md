@@ -35,7 +35,7 @@ the batter's intentions, which seems difficult.
 - The pitcher's options are limited in a way that might not be representative of the actual game. The pitcher cannot
 aim for a borderline zone and can only aim for 5x5 centers.
 
-## TODO
+## TODO / Ideas
 - Finish the poster. Clean up the code. Make a write-up.
   - Data and models
   - Stochastic games
@@ -43,5 +43,11 @@ aim for a borderline zone and can only aim for 5x5 centers.
 
 - Test strategies for optimizing batter selection. Then, run against a few real teams' batting orders and see if
   we can get "better" suggestions. Also analyze the runs that we record between our strategies and see if there are any patterns
+
+- Perhaps a batter selection strategy can be developed which directly uses the symmetry of the game, since running the game
+  gives us values for each rotation of the batting order.
+
+- Investigate ways to improve convergence on two-strike positions (where fouls act as self-loops). I got minor improvement
+  by iterating an additional time, which is currently still in the code.
 
 - Incorporate a distribution for on-field outcomes. We can start with the empirical distribution

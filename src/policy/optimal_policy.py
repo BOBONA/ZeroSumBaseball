@@ -122,7 +122,7 @@ class PolicySolver:
         return {k: v for k, v in self.__dict__.items() if k not in ['bd', 'policy_problem']}
 
     def initialize_distributions(self, batch_size: int = default_batch, save_distributions: bool = False,
-                                 load_distributions: bool = False, load_transition: bool = False):
+                                 load_distributions: bool = False, load_transition: bool = False, path: str = ""):
         """
         Initializes the transition distributions for the given pitcher and batter pair. Note that
         the individual calculate distribution methods support batching for multiple pairs, but this 
@@ -130,27 +130,28 @@ class PolicySolver:
         """
 
         if load_distributions and load_transition:
-            distributions = load_blosc2('transition_distribution.blosc2')
+            distributions = load_blosc2(f'{path}transition_distribution.blosc2')
             self.transitions, self.transition_distribution = distributions['transitions'], distributions['transition_distribution']
             return
 
         distributions = defaultdict(lambda: None)
         if load_distributions:
-            distributions = load_blosc2('distributions.blosc2')
+            distributions = load_blosc2(f'{path}distributions.blosc2')
 
         self.transitions, self.transition_distribution = self.precalculate_transition_distribution(
-            batch_size=batch_size, save_distributions=save_distributions, batter_patiences=distributions['batter_patience'],
-            swing_outcomes=distributions['swing_outcomes'], pitcher_control=distributions['pitcher_control']
+            batch_size=batch_size, batter_patiences=distributions['batter_patience'],
+            swing_outcomes=distributions['swing_outcomes'], pitcher_control=distributions['pitcher_control'],
+            save_distributions=save_distributions, path=path
         )
 
         if save_distributions:
-            save_blosc2({'transition_distribution': self.transition_distribution, 'transitions': self.transitions}, 'transition_distribution.blosc2')
+            save_blosc2({'transition_distribution': self.transition_distribution, 'transitions': self.transitions}, f'{path}transition_distribution.blosc2')
 
     def precalculate_transition_distribution(self, batch_size: int = default_batch,
                                              batter_patiences: BatterPatienceDistribution | None = None,
                                              swing_outcomes: SwingOutcomeDistribution | None = None,
                                              pitcher_control: PitcherControlDistribution | None = None,
-                                             save_distributions: bool = False) -> tuple[Transitions, TransitionDistribution]:
+                                             save_distributions: bool = False, path: str = "") -> tuple[Transitions, TransitionDistribution]:
         """
         Precalculates the transition probabilities for a given pitcher and batter pair.
         This method is complicated by the fact that both the pitch outcome and the swing outcome
@@ -165,7 +166,7 @@ class PolicySolver:
             if batter_patiences is None else batter_patiences
 
         if save_distributions:
-            save_blosc2({'swing_outcomes': swing_outcomes, 'pitcher_control': pitcher_control, 'batter_patience': batter_patiences}, 'distributions.blosc2')
+            save_blosc2({'swing_outcomes': swing_outcomes, 'pitcher_control': pitcher_control, 'batter_patience': batter_patiences}, f'{path}distributions.blosc2')
 
         def map_t(t):
             return self.total_states_dict[t[0]], t[1]
