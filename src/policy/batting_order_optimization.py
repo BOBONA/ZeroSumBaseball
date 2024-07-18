@@ -4,7 +4,9 @@ import multiprocessing
 import random
 import time
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
+import numpy as np
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData, save_blosc2, load_blosc2
@@ -14,6 +16,7 @@ from src.policy.optimal_policy import PolicySolver, seed
 
 type Permutation = tuple[int, ...]
 
+# This can be swapped out for the regular rules, but will require way more computation
 rules = DebugRules
 
 
@@ -24,6 +27,16 @@ def swap(perm: Permutation, i: int, j: int) -> Permutation:
 
 
 class BattingOrderStrategy(ABC):
+    """
+    This is a base class for strategies that try to optimize the batting order.
+    It's important to understand how this works to create new strategies and understand the existing ones.
+    A strategy can only suggest a new permutation to try. If the permutation has already been tried, nothing will happen.
+    The strategy will keep track of all the tries and the best permutation found so far.
+
+    IMPORTANT: Each run of the strategy actually tests 9 permutations. Because of the symmetry of the problem, for
+    [a, b, c] we also test [b, c, a] and [c, a, b]. Keep this in mind when creating a strategy, since it means you
+    have more data you get from each run.
+    """
 
     def __init__(self):
         self.tries = dict()
@@ -39,11 +52,6 @@ class BattingOrderStrategy(ABC):
     def is_finished(self) -> bool:
         """Returns whether the strategy is complete"""
         pass
-
-    def get_solution(self) -> tuple[Permutation, float]:
-        """Returns the strategy's best solution"""
-
-        return self.get_best()
 
     def step(self, policy_solver: PolicySolver):
         perm = None
@@ -114,30 +122,46 @@ class Random(BattingOrderStrategy):
 
 
 class OneByOne(BattingOrderStrategy):
-    """Greedily fills the batting order, from first to last"""
+    """
+    Tries to greedily fills the batting order, from first to last.
+    Because of the symmetry of the problem, a better permutation is sometimes found
+    that doesn't fit the one-by-one approach. In this case it resets with the new permutation
+    as a start...
+    """
 
     def __init__(self):
         super().__init__()
         self.perm = tuple(range(rules.num_batters))
         self.considering_batter = 0
         self.batter_choices = []
+        self.tested = set()
 
     def get_next_permutation(self) -> Permutation:
+        # If a better permutation has been found outside the one-by-one approach, reset the strategy
+        if self.get_best() is not None and self.get_best()[0] != self.perm and self.get_best()[0] not in self.tested:
+            self.perm = self.get_best()[0]
+            self.considering_batter = 0
+            self.batter_choices = []
+            self.tested = set()
+
+        # When all choices for the batter have been tested, select the best one
         if len(self.batter_choices) == rules.num_batters - self.considering_batter:
             self.perm = max(self.batter_choices, key=lambda x: self.tries[x])
             self.considering_batter += 1
             self.batter_choices = []
 
+            # If the algorithm has finished, we just restart
+            if self.considering_batter >= rules.num_batters - 1:
+                self.considering_batter = 0
+
         perm = swap(self.perm, self.considering_batter, self.considering_batter + len(self.batter_choices))
         self.batter_choices.append(perm)
+        self.tested.add(perm)
 
         return perm
 
     def is_finished(self):
         return self.considering_batter >= rules.num_batters - 1
-
-    def get_solution(self) -> tuple[Permutation, float]:
-        return self.perm, self.tries[self.perm]
 
 
 class GreedyHillClimbing(BattingOrderStrategy):
@@ -146,6 +170,7 @@ class GreedyHillClimbing(BattingOrderStrategy):
     def __init__(self):
         super().__init__()
         self.possible_swaps = list(itertools.combinations(range(rules.num_batters), 2))
+        random.shuffle(self.possible_swaps)
         self.swap_index = 0
         self.current_perm = tuple(range(rules.num_batters))
 
@@ -165,35 +190,139 @@ class GreedyHillClimbing(BattingOrderStrategy):
 
 class StochasticHillClimbing(BattingOrderStrategy):
     """
-    TODO A stochastic variation of the hill climbing algorithm, which considers every swap with a probability
-    based on the score improvement/loss.
+    A stochastic variation of the hill climbing algorithm, which considers every swap with a probability
+    based on the score's percentile.
     """
 
-    def __init__(self):
-        super().__init__()
-
-    def get_next_permutation(self) -> Permutation:
-        pass
-
-    def is_finished(self) -> bool:
-        pass
-
-
-class SamplingHillClimbing(BattingOrderStrategy):
-    """TODO A variant of the hill climbing algorithm that samples a number of random swaps and selects the best one"""
+    exp = 4  # A higher value will make the algorithm more greedy
 
     def __init__(self):
         super().__init__()
+        self.possible_swaps = list(itertools.combinations(range(rules.num_batters), 2))
+        random.shuffle(self.possible_swaps)
+        self.swap_index = 0
+        self.current_perm = tuple(range(rules.num_batters))
+
+        self.considered_permutations = set()  # Permutations that have been considered for a swap
+        self.all_values = []
 
     def get_next_permutation(self) -> Permutation:
-        pass
+        # We look at new permutations and consider the worst ones first
+        not_considered = set(self.get_tries().keys()) - self.considered_permutations
+        not_considered = sorted(not_considered, key=lambda x: self.get_tries()[x])
+        for new_perm in not_considered:
+            percentile = 1 if len(self.all_values) == 0 else self.calculate_percentile(self.get_tries()[new_perm])
+            if random.random() < math.pow(percentile, self.exp):
+                self.current_perm = new_perm
+                self.swap_index = 0
+
+            self.considered_permutations.add(new_perm)
+            self.all_values.append(self.get_tries()[new_perm])
+
+        # Then we suggest a new swap
+        perm = swap(self.current_perm, *self.possible_swaps[self.swap_index])
+        self.swap_index += 1
+
+        return perm
+
+    def calculate_percentile(self, value):
+        all_values_array = np.array(self.all_values)
+        percentile = np.sum(all_values_array <= value) / len(all_values_array)
+        return percentile
 
     def is_finished(self) -> bool:
-        pass
+        return self.swap_index >= len(self.possible_swaps)
 
 
-def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, i: int = 0):
-    policy_solver = PolicySolver(None, *match, rules=DebugRules)
+class ShortTermHillClimbing(BattingOrderStrategy):
+    """
+    A variant of the hill climbing algorithm with short-term memory loss
+    It's greedy for the last n permutations that have been tried
+    """
+
+    # Basically, a permutation gets 8 tries before it's forgotten
+    memory = 8 * rules.num_batters
+
+    def __init__(self):
+        super().__init__()
+        self.possible_swaps = list(itertools.combinations(range(rules.num_batters), 2))
+        random.shuffle(self.possible_swaps)
+        self.swap_index = 0
+        self.current_perm = tuple(range(rules.num_batters))
+
+    def get_next_permutation(self) -> Permutation:
+        # Check the best permutation in our memory
+        last_n = list(self.get_tries().keys())[-self.memory:]
+        best_perm = None if not last_n else max(last_n, key=lambda x: self.get_tries()[x])
+        if self.get_best() is not None and best_perm != self.current_perm:
+            self.current_perm = best_perm
+            self.swap_index = 0
+
+        # Explore a new swap
+        perm = swap(self.current_perm, *self.possible_swaps[self.swap_index])
+        self.swap_index += 1
+
+        return perm
+
+    def is_finished(self) -> bool:
+        return self.swap_index >= len(self.possible_swaps) and self.get_best() != self.current_perm
+
+
+class GeneticAlgorithm(BattingOrderStrategy):
+    """We attempt to use the edge recombination operator to create new permutations"""
+
+    def get_next_permutation(self) -> Permutation:
+        best = sorted(self.get_tries().keys(), key=lambda x: self.get_tries()[x], reverse=True)[:2]
+        if len(best) < 2:
+            return tuple(random.sample(range(rules.num_batters), rules.num_batters))
+
+        perm1, perm2 = random.sample(best, 2)
+        child = self.edge_recombination_operator(perm1, perm2)
+
+        # We need to add a bit of randomness to the child
+        child = swap(child, random.randint(0, rules.num_batters - 1), random.randint(0, rules.num_batters - 1))
+        return child
+
+    @staticmethod
+    def edge_recombination_operator(parent1, parent2):
+        # Step 1: Create the adjacency matrix
+        adjacency = defaultdict(set)
+        for p in (parent1, parent2):
+            for i, gene in enumerate(p):
+                adjacency[gene].add(p[(i - 1) % len(p)])
+                adjacency[gene].add(p[(i + 1) % len(p)])
+
+        # Step 2: Create the offspring
+        offspring = []
+        current = random.choice([parent1[0], parent2[0]])  # Start with a random gene from parent1
+
+        while len(offspring) < len(parent1):
+            offspring.append(current)
+
+            # Remove current gene from all adjacency lists
+            for adj_list in adjacency.values():
+                adj_list.discard(current)
+
+            if adjacency[current]:
+                # Find the neighbors with the fewest remaining neighbors
+                min_neighbors = min(len(adjacency[x]) for x in adjacency[current])
+                candidates = [x for x in adjacency[current] if len(adjacency[x]) == min_neighbors]
+
+                # Choose a random neighbor from the candidates
+                current = random.choice(candidates)
+            else:
+                # If no neighbors, choose a random unvisited gene
+                unvisited = set(parent1) - set(offspring)
+                current = random.choice(list(unvisited)) if unvisited else None
+
+        return tuple(offspring)
+
+    def is_finished(self) -> bool:
+        return False
+
+
+def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, i: int = 0, print_output=False):
+    policy_solver = PolicySolver(None, *match, rules=rules)
     policy_solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True)
 
     for step in range(k):
@@ -201,23 +330,24 @@ def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, i: int =
         strategy.step(policy_solver)
         end = time.time()
 
-        if step % 10 == 9:
+        if step % 10 == 9 and print_output:
             print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
 
     save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/{i}.blosc2')
-    graph_strategy(strategy)
+    graph_strategy(strategy, i)
 
 
 def test_strategies():
-    strategies = [BruteForce, Random, OneByOne, GreedyHillClimbing]
-    k = 40
-    num_matches = 1
+    strategies = [OneByOne, GreedyHillClimbing, StochasticHillClimbing, ShortTermHillClimbing, GeneticAlgorithm]
+    k = 60
+    num_matches = 20
+    start = 20
     matches = load_blosc2('matches.blosc2')
 
     bd = BaseballData()
-    for i in range(num_matches):
+    for i in tqdm(range(start, start + num_matches)):
         match = matches[i]
-        PolicySolver(bd, *match, rules=DebugRules).initialize_distributions(save_distributions=True)
+        PolicySolver(bd, *match, rules=rules).initialize_distributions(save_distributions=True)
 
         threads = []
         for strategy in strategies:
@@ -229,34 +359,17 @@ def test_strategies():
         for thread in threads:
             thread.join()
 
-
-def test():
-    bd = BaseballData()
-    test_match = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])
-
-    policy_solver = PolicySolver(bd, *test_match, rules=DebugRules)
-    policy_solver.initialize_distributions(save_distributions=True)
-
-    strategy = GreedyHillClimbing()
-    k = 40
-    for _ in tqdm(range(k)):
-        strategy.step(policy_solver)
-
-    save_blosc2(strategy, 'greedy.blosc2')
-
-    print('Starting permutation:', list(strategy.get_tries().keys())[0])
-    print('Best permutation:', strategy.get_best())
-
-    graph_strategy(strategy)
+        print('Winning strategy:', max(strategies, key=lambda x: load_blosc2(f'{x.__name__.lower()}/{i}.blosc2').get_best()[1]))
 
 
-def graph_strategy(strategy: BattingOrderStrategy):
+def graph_strategy(strategy: BattingOrderStrategy, game_num: int = 0):
     import matplotlib.pyplot as plt
 
     steps = [x[1] for x in strategy.get_steps()]
     x = list(range(1, len(steps)))
     y = [max(steps[0:i]) for i in x]
     plt.plot(x, y)
+    plt.title(f'{game_num}: {strategy.__class__.__name__} - Best value {strategy.get_best()[1]}')
     plt.show()
 
 
@@ -269,7 +382,7 @@ def generate_matches():
 
     for _ in range(num_matches):
         pitcher = random.choice(sorted(bd.pitchers))
-        batters = random.sample(sorted(bd.batters), DebugRules.num_batters)
+        batters = random.sample(sorted(bd.batters), rules.num_batters)
         matches.append((pitcher, batters))
 
     save_blosc2(matches, 'matches.blosc2')

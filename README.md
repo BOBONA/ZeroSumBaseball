@@ -37,13 +37,11 @@ aim for a borderline zone and can only aim for 5x5 centers.
 
 ## TODO
 - Finish the poster. Clean up the code. Make a write-up.
+  - Data and models
+  - Stochastic games
+  - Batter selection
 
-- Test strategies for optimizing batter selection
+- Test strategies for optimizing batter selection. Then, run against a few real teams' batting orders and see if
+  we can get "better" suggestions. Also analyze the runs that we record between our strategies and see if there are any patterns
 
 - Incorporate a distribution for on-field outcomes. We can start with the empirical distribution
-
-- Improve the value iteration algorithm to converge faster. Specifically, I'm looking at the way that cycles
-  slow down convergence. A simple solution might be to iterate over states with two strikes (which cycle back to 
-  themselves through fouls) more times. Maybe we could develop a general solution for this. Or it might be I don't need
-  to iterate more times, but simply start with those states first.
-
