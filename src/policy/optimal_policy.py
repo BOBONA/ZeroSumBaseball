@@ -490,7 +490,7 @@ class PolicySolver:
 
                 # Running an additional iteration on two strike states (which are self-loops when there's a foul)
                 # seems to help a bit, but still converges much slower than when fouls do end an inning
-                if self.total_states[state_i].strikes == self.rules.num_strikes - 1 and not self.rules.fouls_end_inning:
+                if self.total_states[state_i].strikes == self.rules.num_strikes - 1 and not self.rules.fouls_end_at_bats:
                     action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
                     new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
 
@@ -583,7 +583,7 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int], load=F
     solver.save('solved_policy.blosc2')
 
 
-def main(debug: bool = False, load=True):
+def main(debug: bool = False, load=False):
     if not debug:
         bd = None
         if not load:

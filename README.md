@@ -37,12 +37,11 @@ aim for a borderline zone and can only aim for 5x5 centers.
 
 ## TODO / Ideas
 - Finish the poster. Clean up the code. Make a write-up.
-  - Data and models
-  - Stochastic games
   - Batter selection
+  - Stochastic games
 
-- Test strategies for optimizing batter selection. Then, run against a few real teams' batting orders and see if
-  we can get "better" suggestions. Also analyze the runs that we record between our strategies and see if there are any patterns
+- Run against a cardinals lineup. Analyze the runs that we record between our strategies and see if there are any patterns, 
+  why are some lineups improved more, what do the winning ones look like?
 
 - Perhaps a batter selection strategy can be developed which directly uses the symmetry of the game, since running the game
   gives us values for each rotation of the batting order.

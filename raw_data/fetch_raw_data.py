@@ -8,9 +8,9 @@ from pybaseball import statcast
 
 # pybaseball is glitchy and will sometimes freeze, I apologize in advance
 # Still better than scraping it ourselves
-for year in range(2008, 2024):
+for year in range(2008, 2025):
     raw_data = statcast(start_dt=f'{year}-01-01', end_dt=f'{year + 1}-01-01', verbose=False)
     pickled_data = pickle.dumps(raw_data)
     compressed_data = blosc2.compress(pickled_data)
-    with open(f'../statcast/{year}.blosc2', 'wb') as f:
+    with open(f'statcast/{year}.blosc2', 'wb') as f:
         f.write(compressed_data)

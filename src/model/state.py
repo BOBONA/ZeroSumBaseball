@@ -40,7 +40,7 @@ class Rules:
     num_batters = 9
     max_runs = 9
 
-    fouls_end_inning = False
+    fouls_end_at_bats = False
     two_base_game = False
 
 
@@ -53,7 +53,7 @@ class DebugRules(Rules):
     num_outs = 2
     num_batters = 9
 
-    fouls_end_inning = True  # This speeds up convergence significantly
+    fouls_end_at_bats = True  # This speeds up convergence significantly
     two_base_game = True  # This is a game with only two bases
 
 
@@ -81,7 +81,7 @@ class GameState:
             return next_state, 0
 
         if (result == PitchResult.SWINGING_STRIKE or result == PitchResult.CALLED_STRIKE or
-                (result == PitchResult.SWINGING_FOUL and (next_state.strikes < rules.num_strikes - 1 or rules.fouls_end_inning))):
+                (result == PitchResult.SWINGING_FOUL and (next_state.strikes < rules.num_strikes - 1 or rules.fouls_end_at_bats))):
             next_state.strikes += 1
         elif result == PitchResult.CALLED_BALL:
             next_state.balls += 1

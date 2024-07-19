@@ -10,6 +10,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData, save_blosc2, load_blosc2
+from src.model.players import Pitcher
 from src.model.state import DebugRules, GameState
 from src.policy.optimal_policy import PolicySolver, seed
 from src.policy.rosters import rosters, pitchers
@@ -412,6 +413,27 @@ def test_against_rosters(load: bool = False):
         thread.join()
 
 
+def test_cardinals():
+    bd = BaseballData()
+
+    average_pitcher = sum(p.data for p in bd.pitchers.values() if p.obp_percentile) / len(bd.pitchers)
+    pitcher = Pitcher()
+    pitcher.data = average_pitcher
+    bd.pitchers['average_pitcher'] = pitcher
+    cardinals = rosters['cardinals']
+    match = ('average_pitcher', cardinals)
+    policy_solver = PolicySolver(bd, *match, rules=rules)
+    policy_solver.initialize_distributions()
+    del bd
+
+    strategy = OneByOne()
+    k = 120
+    for _ in tqdm(range(k)):
+        strategy.step(policy_solver)
+
+    save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL.blosc2')
+
+
 def graph_strategy(strategy: BattingOrderStrategy, label: str = ""):
     import matplotlib.pyplot as plt
 
@@ -440,4 +462,4 @@ def generate_matches():
 
 if __name__ == '__main__':
     seed()
-    test_against_rosters(load=True)
+    test_cardinals()
