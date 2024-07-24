@@ -36,17 +36,22 @@ the batter's intentions, which seems difficult.
 aim for a borderline zone and can only aim for 5x5 centers.
 
 ## TODO / Ideas
-- Finish the poster. Clean up the code. Make a write-up.
-  - Batter selection
-  - Stochastic games
+- Clean up the code. Make a write-up.
 
-- Run against a cardinals lineup. Analyze the runs that we record between our strategies and see if there are any patterns, 
-  why are some lineups improved more, what do the winning ones look like?
+- Analyze the runs that we record between our strategies and see if there are any patterns, 
+  - why are some lineups improved more, what do the winning ones look like?
+  - Test the similarity between the value space of DebugRules and regular Rules.
 
-- Perhaps a batter selection strategy can be developed which directly uses the symmetry of the game, since running the game
-  gives us values for each rotation of the batting order.
+- Maybe we can come up with a better player representation for our neural networks? The original paper sounds convincing, but I'm not sure
+  if the spatial representation actually helps the network when it's only 5x5. 
+  - Certainly, the pitch representation seems super redundant. Is there any reason not to just use a one-hot encoding (0-18)??
+
+- Investigate the problem of player trade value, with respect to likely pitchers and lineups to be encountered in playoffs.
 
 - Investigate ways to improve convergence on two-strike positions (where fouls act as self-loops). I got minor improvement
   by iterating an additional time, which is currently still in the code.
 
 - Incorporate a distribution for on-field outcomes. We can start with the empirical distribution
+
+- Is there any way to approximate values for the full game using the simplified game rules? This would allow
+  for more complex analysis. Perhaps viewing the states as vectors would help? Transforming from one representation to another...

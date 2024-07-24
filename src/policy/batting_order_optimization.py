@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from src.data.data_loading import BaseballData, save_blosc2, load_blosc2
 from src.model.players import Pitcher
-from src.model.state import DebugRules, GameState
+from src.model.state import DebugRules, GameState, Rules
 from src.policy.optimal_policy import PolicySolver, seed
 from src.policy.rosters import rosters, pitchers
 
@@ -340,6 +340,8 @@ class GeneticAlgorithm(BattingOrderStrategy):
 
 
 def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, label='strat', print_output=False):
+    """Run a strategy for k steps and then save it"""
+
     policy_solver = PolicySolver(None, *match, rules=rules)
     policy_solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True, path=f'distributions/{label}/')
 
@@ -414,6 +416,8 @@ def test_against_rosters(load: bool = False):
 
 
 def test_cardinals():
+    """Test the cardinals lineup against an average pitcher"""
+
     bd = BaseballData()
 
     average_pitcher = sum(p.data for p in bd.pitchers.values() if p.obp_percentile) / len(bd.pitchers)
@@ -422,7 +426,7 @@ def test_cardinals():
     bd.pitchers['average_pitcher'] = pitcher
     cardinals = rosters['cardinals']
     match = ('average_pitcher', cardinals)
-    policy_solver = PolicySolver(bd, *match, rules=rules)
+    policy_solver = PolicySolver(bd, *match, rules=Rules)
     policy_solver.initialize_distributions()
     del bd
 
@@ -430,8 +434,7 @@ def test_cardinals():
     k = 120
     for _ in tqdm(range(k)):
         strategy.step(policy_solver)
-
-    save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL.blosc2')
+        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_ALT.blosc2')
 
 
 def graph_strategy(strategy: BattingOrderStrategy, label: str = ""):
@@ -461,5 +464,5 @@ def generate_matches():
 
 
 if __name__ == '__main__':
-    seed()
+    seed(i=1)
     test_cardinals()

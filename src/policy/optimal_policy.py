@@ -10,6 +10,8 @@ import torch
 from torch.distributions import MultivariateNormal
 from torch.utils.data import DataLoader
 
+from src.policy.rosters import rosters
+
 try:
     # noinspection PyUnresolvedReferences
     ipython_name = get_ipython().__class__.__name__
@@ -208,13 +210,17 @@ class PolicySolver:
                     # Given an intended pitch, we get the actual outcome distribution
                     outcome_zone_probs = pitcher_control[action_i]
 
-                    # To account for batter patience, we override the outcomes for borderline zones
                     swing_probs = np.zeros(len(default.COMBINED_ZONES)) + batter_swung
-                    swing_probs[borderline_mask] = batter_patiences[self.batter_lineup[state.batter]][state_i, pitch_type]
+
+                    # On obvious balls, the batter will not swing
+                    swing_probs[~strike_mask] = 0
+
+                    # On borderline balls, if the batter has chosen to swing, we override the decision with the batter's patience
+                    if batter_swung:
+                        swing_probs[borderline_mask] = batter_patiences[self.batter_lineup[state.batter]][state_i, pitch_type]
                     take_probs = 1 - swing_probs
 
                     # Handle swing outcomes (stochastic)
-                    # I am unsure why value decreases slightly now that we are using each zone's swing outcome distribution (instead of just the intended zone)
                     result_probs = swing_outcomes[(self.pitcher_id, self.batter_lineup[state.batter])][state_i, pitch_type]
                     transition_probs = np.dot(swing_to_transition_matrix[state_i], result_probs.transpose())
                     zone_swing_probs = swing_probs * outcome_zone_probs
@@ -488,11 +494,12 @@ class PolicySolver:
                 action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
                 new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
 
-                # Running an additional iteration on two strike states (which are self-loops when there's a foul)
+                # Running two additional iterations on two strike states (which are self-loops when there's a foul)
                 # seems to help a bit, but still converges much slower than when fouls do end an inning
                 if self.total_states[state_i].strikes == self.rules.num_strikes - 1 and not self.rules.fouls_end_at_bats:
-                    action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
-                    new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
+                    for _ in range(2):
+                        action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
+                        new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
 
             # Update values
             difference = np.abs(new_value - value).max()
@@ -557,22 +564,22 @@ class PolicySolver:
         return optimal_policy
 
 
-def seed():
+def seed(i: int = 0):
     """
     There's a bit of randomness in the distribution calculations, most likely from the way
     we're sampling with the pitcher control model. You can use this function to seed the randomness.
     """
 
-    torch.manual_seed(0)
-    np.random.seed(0)
-    random.seed(0)
+    torch.manual_seed(i)
+    np.random.seed(i)
+    random.seed(i)
 
 
 def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int], load=False, batter_permutation=None):
-    # print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
+    print(f'Pitcher OBP: {bd.pitchers[pitcher_id].obp}, Batter (first) OBP: {bd.batters[batter_lineup[0]].obp}')
 
     solver = PolicySolver(bd, pitcher_id, batter_lineup, rules=Rules)
-    solver.initialize_distributions(save_distributions=True, load_distributions=load, load_transition=load)
+    solver.initialize_distributions(save_distributions=True, load_distributions=load, load_transition=True)
     solver.set_batter_permutation(batter_permutation)
     solver.calculate_optimal_policy(print_output=True, beta=2e-4)
 
@@ -583,30 +590,21 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int], load=F
     solver.save('solved_policy.blosc2')
 
 
-def main(debug: bool = False, load=False):
+def main(debug: bool = False, load=True):
     if not debug:
-        bd = None
-        if not load:
-            bd = BaseballData()
+        bd = BaseballData(load_pitches=False)
 
         # The resulting ERA is highly dependent on the pitchers and batters chosen
-        # For these kinds of tests we only look at players with more appearances than min_obp_cutoff (167)
+        # For these kinds of tests we ought to only look at players with more appearances than min_obp_cutoff (167)
 
-        # Back when we were only simulating one pitcher and batter for one inning:
-        good_bad_matchup = (666204, 462102)     # obp = 0.146, 0.049 -> ERA/9 0.005
-        bad_good_matchup = (592464, 608061)     # obp = 0.367, 0.316 -> ERA 0.155
-        good_good_matchup = (666204, 608061)    # obp = 0.146, 0.316 -> ERA 0.132
-        bad_bad_matchup = (592464, 462102)      # obp = 0.367, 0.049 -> ERA 0.003
-
-        # A Cardinals lineup (with Pedro Pages replaced because we don't have enough data for him)
-        full_matchup = (666204, [691026, 676475, 575929, 502671, 680977, 571448, 663457, 669357, 608061])  # ERA 1.05
+        # A Cardinals lineup vs Aaron Nola
+        full_matchup = (605400, rosters['cardinals'])  # ERA 5.13
 
         test_era(bd, *full_matchup, load=load)
     else:
-        # distributions = load_blosc2('distributions.blosc2')
+        distributions = load_blosc2('distributions.blosc2')
         transition_distribution = load_blosc2('transition_distribution.blosc2')
         solver = PolicySolver.from_saved('solved_policy.blosc2')
-        raw_values, raw_policy = solver.raw_values, solver.raw_policy
         print(f'ERA {solver.get_value()}')
         pass  # Do something with the data or just examine it
 
