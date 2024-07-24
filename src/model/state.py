@@ -152,7 +152,7 @@ class GameState:
         return self.num_runs
 
     def __repr__(self):
-        return (f"GameState(i{self.inning} b{self.batter}: {self.balls}/{self.strikes}, {self.num_runs}, {self.num_outs}, "
+        return (f"GameState(i{self.inning} b{self.batter}: {self.balls}/{self.strikes}, {self.num_outs}, "
                 f"{'x' if self.first else '-'}{'x' if self.second else '-'}{'x' if self.third else '-'})")
 
     def __hash__(self):

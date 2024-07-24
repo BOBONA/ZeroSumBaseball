@@ -430,8 +430,13 @@ def test_cardinals():
     policy_solver.initialize_distributions()
     del bd
 
-    strategy = OneByOne()
-    k = 120
+    # strategy = OneByOne()
+    # k = 120
+    # for _ in tqdm(range(k)):
+    #     strategy.step(policy_solver)
+    #     save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_ALT.blosc2')
+    strategy = load_blosc2(f'onebyone/cardinals_OPTIMAL_ALT.blosc2')
+    k = 82
     for _ in tqdm(range(k)):
         strategy.step(policy_solver)
         save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_ALT.blosc2')

@@ -103,7 +103,7 @@ class PolicySolver:
 
         self.policy_problem = None
         self.num_programs = 0
-        self.raw_values: list[float] | None = None
+        self.raw_values: np.ndarray | None = None
         self.raw_policy: PolicySolver.Policy | None = None
 
         self.batter_lineup_permutation = range(rules.num_batters)
@@ -428,17 +428,15 @@ class PolicySolver:
                     transition.batter = batter_lineup_permutation[(current_batter_i + 1) % self.rules.num_batters]
                     transitions[idx] = self.total_states_dict[transition]
 
-    def calculate_optimal_policy(self, print_output: bool = False, use_ordered_iteration: bool = True,
-                                 beta: float = 1e-3, use_last_values: bool = False) -> tuple[Policy, list[float]]:
+    def calculate_optimal_policy(self, print_output: bool = False, beta: float = 1e-3,
+                                 use_last_values: bool = False) -> tuple[Policy, list[float]]:
         """
-        Uses value iteration algorithm to calculate the optimal policy for our model, given
-        the pitcher and batter. https://doi.org/10.1016/B978-1-55860-335-6.50027-1
+        Uses value iteration to calculate the optimal policy for our model, given the pitcher and batter.
 
         A policy (or mixed strategy) defines a probability distribution over actions for each state for
         the pitcher.
 
         :param print_output: This flag prints the difference between iterations and keeps a progress bar
-        :param use_ordered_iteration: This is a flag that improves the convergence by calculating states with the values of the current iteration
         :param beta: The minimum change in value to continue iterating
         :param use_last_values: If True, the last calculated values are used as the initial values for this run, which can speed up convergence by 50%
         :return: The optimal pitcher policy, assigning a probability to each action in each state and the value of each state.
@@ -447,7 +445,6 @@ class PolicySolver:
         """
 
         # Stores the "value" of each state, indexed according to total_states
-        # Last time I measured, random initialization in this manner converged 1/3 faster
         value = self.raw_values if self.raw_values is not None and use_last_values else (
             np.concatenate((np.random.rand(len(self.game_states)), np.zeros(len(self.final_states)))))
 
@@ -457,57 +454,55 @@ class PolicySolver:
         if self.transition_distribution is None:
             self.initialize_distributions()
 
-        # Instead of optimizing all states at once, we can do one inning at a time
-        # This is because the values of a later inning are completely independent of the values of an earlier inning
-        for inning in tqdm(reversed(range(self.rules.num_innings)), total=self.rules.num_innings, desc='Optimizing innings', disable=not print_output):
-            states = [state_i for state_i, state in enumerate(self.game_states) if state.inning == inning]
+        # Instead of optimizing all states at once, we can do one out at a time
+        # This is because the values of a later out are completely independent of the values of an earlier out
+        # You can view this as mixing backward induction with value iteration
+        num_inning_outs = self.rules.num_innings * self.rules.num_outs
+        for inning_out in tqdm(reversed(range(num_inning_outs)), total=num_inning_outs, desc='Optimizing innings/outs', disable=not print_output):
+            states = [state_i for state_i, state in enumerate(self.game_states)
+                      if state.inning == inning_out // self.rules.num_outs and state.num_outs == inning_out % self.rules.num_outs]
 
-            # Sort by "lateness" of the state, to speed up convergence
-            # We sort in order to keep at-bats together
-            states.sort(key=lambda st: ((self.game_states[st].num_outs + self.batter_lineup_permutation.index(self.game_states[st].batter)) * 10 +
-                                        int(self.game_states[st].third) * 4 + int(self.game_states[st].second) * 2 + int(self.game_states[st].first),
-                                        self.game_states[st].balls + self.game_states[st].strikes), reverse=True)
+            # Sort the states sequentially to speed up convergence, keeping at-bats together
+            states.sort(key=lambda st: (self.batter_lineup_permutation.index(self.game_states[st].batter),
+                                        int(self.game_states[st].third), int(self.game_states[st].second), int(self.game_states[st].first),
+                                        self.game_states[st].balls, self.game_states[st].strikes), reverse=True)
 
-            self.optimize_inning(states, value, policy, beta, use_ordered_iteration, print_output=False)
+            # Now run value iteration on these states, repeatedly calculating the policy and values until convergence
+            difference = float('inf')
+            iter_num = 0
+            while difference > beta:
+                new_policy = np.zeros((len(self.game_states), len(self.pitcher_actions)))
+                new_value = value.copy()
+
+                transitions_src = self.transitions if self.permuted_transitions is None else self.permuted_transitions
+
+                # Optimize the policy for each state
+                for state_i in states:
+                    # The expected value (transition reward + value of next states) for each action pair
+                    transitions, rewards = transitions_src[state_i].transpose()
+                    action_quality = np.dot(self.transition_distribution[state_i], rewards + new_value[transitions])
+                    new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
+
+                    # We can improve convergence by running additional iterations on states with two strikes,
+                    # since they are self-loops
+                    # We tested out some schedules, but a fixed number of iterations appeared to work best
+                    loop_schedule = [2]
+                    if self.game_states[state_i].strikes == self.rules.num_strikes - 1 and not self.rules.fouls_end_at_bats:
+                        for _ in range(loop_schedule[min(iter_num, len(loop_schedule) - 1)]):
+                            action_quality = np.dot(self.transition_distribution[state_i], rewards + new_value[transitions])
+                            new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
+
+                # Update values
+                difference = np.abs(new_value - value).max()
+                policy = new_policy
+                value = new_value
+
+                iter_num += 1
 
         self.raw_values = value
         self.raw_policy = policy
 
         return policy, value
-
-    def optimize_inning(self, states: list[int], value: np.ndarray, policy: np.ndarray, beta: float, use_ordered_iteration: bool, print_output: bool):
-        difference = float('inf')
-        iter_num = 0
-        while difference > beta:
-            iter_num += 1
-
-            # Independently optimize the policy for each state
-            new_policy = np.zeros((len(self.game_states), len(self.pitcher_actions)))
-            new_value = value.copy()
-
-            value_src = new_value if use_ordered_iteration else value
-            transitions_src = self.transitions if self.permuted_transitions is None else self.permuted_transitions
-
-            for state_i in tqdm(states, f'Iterating over values, iter={iter_num}', total=len(states), disable=not print_output):
-                # The expected value (transition reward + value of next states) for each action pair
-                transitions, rewards = transitions_src[state_i].transpose()
-                action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
-                new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
-
-                # Running two additional iterations on two strike states (which are self-loops when there's a foul)
-                # seems to help a bit, but still converges much slower than when fouls do end an inning
-                if self.total_states[state_i].strikes == self.rules.num_strikes - 1 and not self.rules.fouls_end_at_bats:
-                    for _ in range(2):
-                        action_quality = np.dot(self.transition_distribution[state_i], rewards + value_src[transitions])
-                        new_policy[state_i], new_value[state_i] = self.update_policy(action_quality)
-
-            # Update values
-            difference = np.abs(new_value - value).max()
-            policy[:] = new_policy
-            value[:] = new_value
-
-            if print_output:
-                print(difference)
 
     def initialize_policy_problem(self, max_pitch_percentage: float = 0.7):
         """We only need to initialize the policy problem once, as the constraints always the same"""
@@ -611,4 +606,10 @@ def main(debug: bool = False, load=True):
 
 if __name__ == '__main__':
     seed()
-    main(debug=False)
+    # main(debug=False)
+    solver = PolicySolver.from_saved('solved_policy.blosc2')
+    solver.num_programs = 0
+    solver.policy_problem = None
+    solver.raw_values += np.random.rand(len(solver.raw_values)) * 0.5
+    solver.calculate_optimal_policy(print_output=True, use_last_values=True)
+    print(f'Num programs: {solver.num_programs}')
