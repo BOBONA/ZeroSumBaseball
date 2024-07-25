@@ -31,7 +31,10 @@ class PitchResult(IntEnum):
 
 
 class Rules:
-    """This class holds the rules to the game, to make swapping between debug and normal rules easier."""
+    """
+    This class decouples some of the game rules from the game state, to make it easier to swap
+    between different rule sets. This is useful for debugging and testing things quickly.
+    """
 
     num_innings = 9
     num_balls = 4
@@ -74,6 +77,8 @@ class GameState:
         self.batter = batter
 
     def transition_from_pitch_result(self, result: PitchResult, rules: type[Rules] = Rules) -> tuple[Self, int]:
+        """Return the next state, transitioning according to result and the supplied rule config class."""
+
         next_state = GameState(inning=self.inning, balls=self.balls, strikes=self.strikes, runs=self.num_runs,
                                outs=self.num_outs, first=self.first, second=self.second, third=self.third, batter=self.batter)
 

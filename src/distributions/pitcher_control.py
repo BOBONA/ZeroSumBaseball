@@ -63,6 +63,8 @@ def get_pitch_control_sets(data: BaseballData) -> (PitchControlDataset, PitchCon
 
 def train(epochs: int = 400, batch_size: int = 5, learning_rate: float = 0.0001,
           path: str = '../../model_weights/pitcher_control.pth'):
+    """Here is a standard training loop"""
+
     data = BaseballData()
 
     training_dataset, validation_dataset = get_pitch_control_sets(data)
@@ -120,5 +122,6 @@ def train(epochs: int = 400, batch_size: int = 5, learning_rate: float = 0.0001,
 
 if __name__ == '__main__':
     # This should converge to ~751 on the training set
-    # There might be something wrong with this setup, as it doesn't seem to be learning very well
+    # There might be something wrong with this setup, as it doesn't seem to be learning too well
+    # Might also be a lack of data
     train(batch_size=10, epochs=400, learning_rate=0.00005, path='../../model_weights/pitcher_control.pth')

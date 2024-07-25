@@ -26,11 +26,15 @@ from src.model.zones import Zones, default
 
 
 def load_blosc2(path: str):
+    """Loads a file compressed with pickle and blosc2"""
+
     with open(path, 'rb') as f:
         return pickle.loads(blosc2.decompress(f.read()))
 
 
 def save_blosc2(data, path: str):
+    """Saves an object to a file compressed with pickle and blosc2, creating directories if necessary"""
+
     if os.path.dirname(path) and not os.path.exists(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
 
@@ -53,16 +57,11 @@ class BaseballData:
     This class loads, processes, and stores the baseball data used for training and evaluation.
     More specific datasets are created for training specific models.
 
-    As we add more data processing to this class, the time to load the data from scratch
-    increases. Use load_with_cache to load the data once and cache it for future use.
-
-    We do not use all the data available in this dataset, but the interesting column names
-    are still kept.
-
-    See https://www.kaggle.com/datasets/pschale/mlb-pitch-data-20152018/
+    We use pickle and blosc2 to compress data very efficiently.
     """
 
     default_processed_data_dir = '../../processed_data/'
+    year_range = range(2008, 2025)
 
     def __init__(self, load_pitches: bool = True, load_players: bool = True,
                  processed_data_dir: str = default_processed_data_dir):
@@ -71,7 +70,7 @@ class BaseballData:
 
         if load_pitches:
             self.pitches = []
-            for year in tqdm(range(2008, 2025), desc='Loading pitches'):
+            for year in tqdm(self.year_range, desc='Loading pitches'):
                 self.pitches.extend(load_blosc2(processed_data_dir + f'{year}.blosc2'))
 
         if load_players:
@@ -107,7 +106,7 @@ class BaseballData:
         velocities = []  # To normalize the velocity data
 
         # Load the pitches, year by year
-        for year in tqdm(range(2008, 2025)):
+        for year in tqdm(cls.year_range):
             pitch_data: DataFrame = load_blosc2(f'{raw_data_dir}{year}.blosc2')
             pitch_data = pitch_data.replace({np.nan: None})
 

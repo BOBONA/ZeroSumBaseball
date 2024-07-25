@@ -74,6 +74,11 @@ class BatterSwings(nn.Module):
 
 
 def batter_patience_map(bd: BaseballData, pitch_idx: int, pitch: Pitch) -> (int, (Tensor, Tensor, Tensor, Tensor), Tensor):
+    """
+    We map the pitch to the batter, pitch, and game state data, and the swing outcome. The pitch index
+    is included for utility purposes in other contexts, since this map is also used manually outside this class.
+    """
+
     return (pitch_idx, (bd.batters[pitch.batter_id].data, pitch.get_one_hot_encoding(),
                         torch.tensor(pitch.game_state.strikes, dtype=torch.float32),
                         torch.tensor(pitch.game_state.balls, dtype=torch.float32),
@@ -97,6 +102,8 @@ def get_batter_patience_set(data: BaseballData) -> (PitchDataset, PitchDataset):
 
 def train(epochs: int = 50, batch_size: int = 512, learning_rate: float = 0.001,
           path: str = '../../model_weights/batter_patience.pth'):
+    """Here is a standard training loop"""
+
     data = BaseballData()
 
     training_dataset, validation_dataset = get_batter_patience_set(data)

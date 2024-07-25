@@ -4,7 +4,13 @@ import torch
 
 
 class Zone:
-    """A Zone is represented with physical coordinates and "virtual" coordinates."""
+    """
+    A Zone is represented with physical coordinates and "virtual" coordinates. Physical coordinates
+    dictate how to map from a real pitch to one of our zones. Virtual coordinates are used to place the zone
+    in our one-hot encodings.
+
+    See Zones for the full context.
+    """
 
     def __init__(self, coords: list[tuple[int, int]], left: float, right: float, bottom: float, top: float, is_strike: bool = True, is_borderline: bool = False):
         self.coords = coords
@@ -35,7 +41,7 @@ class Zones:
     We use the following reference for default measurements https://tangotiger.net/strikezone/zone%20chart.png
 
     Using those measurements, we divide the physical strike zone into 5x5 zones. In our model, (0, 0)
-    is the bottom left corner (although how you think of it shouldn't actually matter).
+    is the bottom left corner (although how you orient it doesn't actually matter).
 
     * ----- *
     | o o o |
@@ -43,23 +49,25 @@ class Zones:
     | o o o |
     * ----- *
 
-    Borderline zones are also included. These are considered one baseball's width around the edge of the strike zone
-    (within and without), and are used to help determine batter patience.
+    Borderline zones are also included. These are pitches that land in the "shadow zone", one baseball's width around
+    the edge of the strike zone (within and without). We use this to handle batter patience.
 
-    In our computations, zone indexes are used instead of the direct Zone objects
+    In our computations, zone indexes are used instead of the direct Zone objects. A singleton instance of Zones (default)
+    makes it easy to fetch a Zone object from an index.
+
     COMBINED_ZONES is a list of ZONES and BORDERLINE_ZONES
     The only difference between a borderline zone and a regular zone in the actual data is the is_borderline attribute,
-    meaning that an index of a borderline zone is the index of the corresponding zone in ZONES + len(ZONES)
+    meaning that an index of a borderline zone is the index of the corresponding zone in index ZONES + len(ZONES)
     """
 
-    # The width/height of the virtual strike zone
+    # The width/height of the virtual strike zone. This probably cannot be changed without breaking things.
     DIMENSION = 5
 
     def __init__(self, width=20, sz_top=42, sz_bottom=18):
         """
         :param width: The width of the strike zone
-        :param sz_top: The top of the strike zone
-        :param sz_bottom: The bottom of the strike zone
+        :param sz_top: The top of the strike zone (a batter's shoulders)
+        :param sz_bottom: The bottom of the strike zone (a batter's knees)
         """
 
         self.ZONES = []
@@ -123,8 +131,8 @@ class Zones:
 
     def get_zones_batched(self, x_locs: torch.Tensor, y_locs: torch.Tensor) -> list[int]:
         """
-        This batched version of get_zone is significantly faster and necessary for the random
-        sampling method used for measuring intended vs actual pitch locations. It returns indices of ZONES.
+        This batched version of get_zone is much faster and necessary for the random sampling method used for
+        generating a pitch outcome distribution. It returns indices.
         """
 
         borderline_mask = (self.STRIKE_ZONE_LEFT - self.BALL_SIZE <= x_locs) & (x_locs <= self.STRIKE_ZONE_RIGHT + self.BALL_SIZE) & \

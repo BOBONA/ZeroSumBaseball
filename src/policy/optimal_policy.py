@@ -24,7 +24,7 @@ from src.data.datasets import SwingResult, PitchDataset, PitchControlDataset
 from src.distributions.batter_patience import BatterSwings, batter_patience_map
 from src.distributions.pitcher_control import PitcherControl
 from src.distributions.swing_outcome import SwingOutcome, map_swing_outcome
-from src.model.state import GameState, PitchResult, Rules, DebugRules
+from src.model.state import GameState, PitchResult, Rules
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.zones import default
@@ -36,9 +36,9 @@ type O = bool
 type S = GameState
 
 # These distributions can be indexed into according to the lists defined above
-type SwingOutcomeDistribution = np.ndarray  # [S_i][A_i][SwingResult] -> swing result probability
-type PitcherControlDistribution = np.ndarray  # [A_i][ZONE_i] -> pitch outcome zone probability
-type BatterPatienceDistribution = np.ndarray  # [S_i][PitchType][ZONE_i] -> batter swing probability
+type SwingOutcomeDistribution = np.ndarray  # [S_i][PitchType][ZONES_i][SwingResult] -> swing result probability
+type PitcherControlDistribution = np.ndarray  # [A_i][COMBINED_ZONES_i] -> pitch outcome zone probability
+type BatterPatienceDistribution = np.ndarray  # [S_i][PitchType][ZONES_i] -> batter swing probability
 
 
 class PolicySolver:
@@ -111,16 +111,20 @@ class PolicySolver:
 
     @classmethod
     def from_saved(cls, path: str, bd: BaseballData | None = None) -> Self:
-        """Loads a saved policy solver from a file"""
+        """Loads a saved policy solver from a blosc2 file"""
 
         solver: Self = load_blosc2(path)
         solver.bd = bd
         return solver
 
     def save(self, path: str):
+        """Saves the policy solver to a blosc2 file"""
+
         save_blosc2(self, path)
 
     def __getstate__(self):
+        """We shouldn't pickle bd (redundant) or policy_problem (not serializable)"""
+
         return {k: v for k, v in self.__dict__.items() if k not in ['bd', 'policy_problem']}
 
     def initialize_distributions(self, batch_size: int = default_batch, save_distributions: bool = False,
@@ -326,6 +330,7 @@ class PolicySolver:
                 pitcher_type_control[pitcher][pitch_type] = gaussian
 
         # To make things simple, we use random sampling to find a distribution of pitch outcomes
+        # If there's an equation for doing this directly, we should use it
         pitcher_control = {}
         for pitcher in tqdm(pitchers, desc='Sampling pitcher control'):
             pitcher_control[pitcher] = np.zeros((len(self.pitcher_actions), len(default.COMBINED_ZONES)), dtype=np.float32)
@@ -585,7 +590,7 @@ def test_era(bd: BaseballData, pitcher_id: int, batter_lineup: list[int], load=F
     solver.save('solved_policy.blosc2')
 
 
-def main(debug: bool = False, load=True):
+def main(debug: bool = False, load=False):
     if not debug:
         bd = BaseballData(load_pitches=False)
 
@@ -606,10 +611,4 @@ def main(debug: bool = False, load=True):
 
 if __name__ == '__main__':
     seed()
-    # main(debug=False)
-    solver = PolicySolver.from_saved('solved_policy.blosc2')
-    solver.num_programs = 0
-    solver.policy_problem = None
-    solver.raw_values += np.random.rand(len(solver.raw_values)) * 0.5
-    solver.calculate_optimal_policy(print_output=True, use_last_values=True)
-    print(f'Num programs: {solver.num_programs}')
+    main(debug=False, load=False)

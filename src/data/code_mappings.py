@@ -26,6 +26,7 @@ pitch_type_mapping = {
     'AB': None,  # One instance of this in the dataset
 }
 
+# This list was found by looking at unique values in the dataframe
 pitch_result_mapping = {
     # Takes
     'ball': PitchResult.CALLED_BALL,
@@ -53,11 +54,13 @@ pitch_result_mapping = {
     'swinging_strike_blocked': PitchResult.SWINGING_STRIKE,
 }
 
+# A few notes,
 # 1. Currently, we only consider the events differentiating between how far the batter goes on HIT_SINGLE.
-# Ultimately, the outcome of a pitch and the outcome of the at-bat event are separate steps
-# and should probably be treated as such. The line does get blurred when the pitch itself ends the
-# at-bat, when a walk or hit by pitch occurs. Once we consider on field events, this will need to change.
-# 2. Instead of using these codes, perhaps we can look at the state of field after the play to learn a distribution of outcomes.
+#    Ultimately, the outcome of a pitch and the outcome of the at-bat event are separate steps
+#    and should probably be treated as such. The line does get blurred when the pitch itself ends the
+#    at-bat, when a walk or hit by pitch occurs. If we start to consider on field events, this will need to change.
+# 2. If we decide to learn a distribution of on-field outcomes, we might be best off ignoring these codes and simply
+#    looking at the state of the field after the play.
 # 3. Some of these events do not happen at the end of the at-bat
 at_bat_event_mapping = {
     # Regular hits

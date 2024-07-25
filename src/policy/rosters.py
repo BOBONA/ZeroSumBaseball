@@ -1,3 +1,10 @@
+"""
+For convenience, here are some lists of batting lineups for a bunch of MLB teams. We should have enough
+data for each of these players.
+
+There are also some pitchers in the pitchers dictionary.
+"""
+
 rosters = {
     # Masyn Winn, Alec Burleson, Willson Contreras, Paul Goldschmidt, Brendan Donovan, Nolan Arenado, Lars Nootbaar, Matt Carpenter, Nolan Gorman
     "cardinals": [691026, 676475, 575929, 502671, 680977, 571448, 663457, 572761, 669357],

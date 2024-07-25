@@ -20,6 +20,9 @@ class Batter:
         obp (float): The batter's on-base percentage.
         obp_percentile (float): The batter's percentile in on-base percentage.
         num_at_bats (int): The number of at-bats the batter has had.
+
+    We could consider changing this representation to add more information about the batter, such as handedness, etc.
+    That would require reworking the data loading code and the models.
     """
 
     __slots__ = ['data', 'obp', 'obp_percentile', 'num_at_bats']

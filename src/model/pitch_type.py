@@ -5,8 +5,11 @@ import torch
 
 class PitchType(IntEnum):
     """
-    This enum follows a previous implementation, but could be reconsidered.
-    It's in its own file to avoid circular imports.
+    Someone with more baseball knowledge can feel free to modify this enum, however
+    that would also require modifying the dict in code_mappings.py accordingly, and
+    retraining each model.
+
+    This is in its own file to avoid circular imports.
     """
 
     FOUR_SEAM = 0

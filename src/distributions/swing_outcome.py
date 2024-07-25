@@ -89,6 +89,8 @@ class SwingOutcome(nn.Module):
 
 
 def map_swing_outcome(idx: int, pitch: Pitch, bd: BaseballData):
+    """We map the pitch to the relevant data and target for training. We include the index for utility purposes."""
+
     return (idx, (bd.pitchers[pitch.pitcher_id].data, bd.batters[pitch.batter_id].data,
                   pitch.get_one_hot_encoding(),
                   torch.tensor(pitch.game_state.strikes, dtype=torch.float32),
@@ -113,6 +115,8 @@ def get_swing_outcome_dataset(data: BaseballData) -> [PitchDataset, PitchDataset
 
 def train(epochs: int = 30, batch_size: int = 128, learning_rate: float = 0.0003,
           path: str = '../../model_weights/swing_outcome.pth'):
+    """Here is a standard training loop"""
+
     data = BaseballData()
     training_set, testing_set = get_swing_outcome_dataset(data)
 
@@ -173,5 +177,5 @@ def train(epochs: int = 30, batch_size: int = 128, learning_rate: float = 0.0003
 
 
 if __name__ == '__main__':
-    # Converged to ~1.341 testing loss
+    # Should converge to ~1.341 testing loss
     train(epochs=25, learning_rate=0.0003, batch_size=128, path=f'../../model_weights/swing_outcome.pth')

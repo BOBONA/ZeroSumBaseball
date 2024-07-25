@@ -15,6 +15,11 @@ from src.model.players import Pitcher
 
 
 class SwingResult(IntEnum):
+    """
+    The SwingResult enum represents the result of a batter's swing at a pitch, for use in training
+    the SwingOutcomeDistribution model. It provides methods for converting to and from the full PitchResult.
+    """
+
     STRIKE = 0
     FOUL = 1
     OUT = 2
@@ -147,8 +152,7 @@ class PitchControlDataset(Dataset):
 
     The empty_data flag is used for testing purposes
 
-    Honestly, this class is a bit of a mess, but it suffices for pitch control... If we work on improving results
-    for the pitch control distribution then this can be refactored.
+    This class is still messy but suffices for pitch control. If we work on improving that then this can be refactored.
     """
 
     def __init__(self, data_source: BaseballData | None = None, pitchers: list[Pitcher] | None = None, empty_data: bool = False):

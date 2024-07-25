@@ -7,9 +7,10 @@ from src.model.zones import Zone, Zones, default
 
 class Pitch:
     """
-    A Pitch is represented as a pair of a pitch type and a location in the strike zone.
+    A Pitch is the basic unit of a baseball game. It includes a lot of relevant information.
     """
 
+    # Saves memory by not storing __dict__ for each instance
     __slots__ = ['game_state', 'batter_id', 'pitcher_id', 'type', 'zone_idx', 'result', 'speed', 'plate_x', 'plate_z',
                  'game_id', 'at_bat_num', 'pitch_num']
 

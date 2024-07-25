@@ -10,14 +10,15 @@ import numpy as np
 from tqdm import tqdm
 
 from src.data.data_loading import BaseballData, save_blosc2, load_blosc2
-from src.model.players import Pitcher
+from src.model.pitch_type import PitchType
+from src.model.players import Pitcher, Batter
 from src.model.state import DebugRules, GameState, Rules
 from src.policy.optimal_policy import PolicySolver, seed
 from src.policy.rosters import rosters, pitchers
 
 type Permutation = tuple[int, ...]
 
-# This can be swapped out for the regular rules, but will require way more computation
+# This can be swapped out for the regular rules, but will require way more computation (like 20x more)
 rules = DebugRules
 
 
@@ -31,12 +32,14 @@ class BattingOrderStrategy(ABC):
     """
     This is a base class for strategies that try to optimize the batting order.
     It's important to understand how this works to create new strategies and understand the existing ones.
-    A strategy can only suggest a new permutation to try. If the permutation has already been tried, nothing will happen.
-    The strategy will keep track of all the tries and the best permutation found so far.
+    A strategy can only suggest a new permutation to try. If the permutation has already been tried, nothing will
+    happen, i.e. another permutation will be immediately requested.
 
-    IMPORTANT: Each run of the strategy actually tests rules.num_batters permutations. Because of the symmetry of the problem, for
-    [a, b, c] we also test [b, c, a] and [c, a, b]. Keep this in mind when creating a strategy, since it means you
-    have more data you get from each run.
+    This class keeps track of all the tries along with the best permutation found so far.
+
+    IMPORTANT: Because of the symmetry of the problem, we get values for each rotation of the batting order. So for
+    [a, b, c], we also get values for [b, c, a] and [c, a, b]. Keep this in mind when creating a strategy, since it means
+    you get more data from each suggestion.
     """
 
     def __init__(self):
@@ -46,15 +49,26 @@ class BattingOrderStrategy(ABC):
 
     @abstractmethod
     def get_next_permutation(self) -> Permutation:
-        """Get the next permutation to try. This will be called repeatedly until a new permutation is fetched."""
+        """Get the next permutation to try. This will be called repeatedly until a new permutation is returned."""
+
         pass
 
     @abstractmethod
     def is_finished(self) -> bool:
-        """Returns whether the strategy is complete"""
+        """
+        Returns whether the strategy is complete. This is necessary if the strategy has a fixed number of steps or
+        risks infinite loops otherwise.
+        """
+
         pass
 
     def step(self, policy_solver: PolicySolver):
+        """
+        Runs a single step of the strategy. This will keep fetching permutations from the strategy until a new one
+        is suggested. It will then use policy_solver to retrieve values for each rotation of the permutation, and update
+        internal state accordingly.
+        """
+
         perm = None
         while (perm is None or perm in self.tries) and not self.is_finished():
             perm = self.get_next_permutation()
@@ -73,18 +87,26 @@ class BattingOrderStrategy(ABC):
             self.steps.append(self.best)
 
     def record_try(self, perm: Permutation, value: float):
+        """Adds a new permutation to the tries and updates the best permutation if necessary"""
+
         self.tries[perm] = value
 
         if self.best is None or value > self.best[1]:
             self.best = (perm, value)
 
     def get_tries(self) -> dict[Permutation, float]:
+        """Returns all the tries made by the strategy"""
+
         return self.tries
 
     def get_best(self) -> tuple[Permutation, float]:
+        """Returns the best permutation found so far"""
+
         return self.best
 
     def get_steps(self) -> list[tuple[Permutation, float]]:
+        """Returns a list of the best permutation found at each step"""
+
         return self.steps
 
 
@@ -254,7 +276,7 @@ class StochasticHillClimbing(BattingOrderStrategy):
 
 class ShortTermHillClimbing(BattingOrderStrategy):
     """
-    A variant of the hill climbing algorithm with short-term memory loss
+    A variant of the hill climbing algorithm with short-term memory loss :)
     It's greedy for the last n permutations that have been tried
     """
 
@@ -354,7 +376,6 @@ def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, label='s
             print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
 
     save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/{label}.blosc2')
-    graph_strategy(strategy, label)
 
 
 def test_strategies():
@@ -366,7 +387,7 @@ def test_strategies():
     start = 20
     matches = load_blosc2('matches.blosc2')
 
-    bd = BaseballData()
+    bd = BaseballData(load_pitches=False)
     for i in tqdm(range(start, start + num_matches)):
         match = matches[i]
         PolicySolver(bd, *match, rules=rules).initialize_distributions(save_distributions=True)
@@ -400,7 +421,7 @@ def test_against_rosters(load: bool = False):
     strategy = OneByOne  # Performed best in tests
 
     if not load:
-        bd = BaseballData()
+        bd = BaseballData(load_pitches=False)
         for team, (pitcher, batters) in matches.items():
             PolicySolver(bd, pitcher, batters, rules=rules).initialize_distributions(save_distributions=True, path=f'distributions/{team}/')
 
@@ -415,10 +436,38 @@ def test_against_rosters(load: bool = False):
         thread.join()
 
 
+def test_batting_average():
+    """We test an average pitcher against average batters with artificially modified batting averages"""
+
+    bd = BaseballData(load_pitches=False)
+
+    average_pitcher = sum(p.data for p in bd.pitchers.values() if p.obp_percentile) / len(bd.pitchers)
+    pitcher = Pitcher()
+    pitcher.data = average_pitcher
+    bd.pitchers['average_pitcher'] = pitcher
+
+    average_batter = sum(b.data for b in bd.batters.values() if b.obp_percentile) / len(bd.batters)
+    for i in range(rules.num_batters):
+        batter = Batter()
+        batter.data = average_batter.detach().clone()
+        batter.data[:len(PitchType)] *= 0.8 + 0.4 * i / rules.num_batters
+        bd.batters[f'average_batter_{i}'] = batter
+
+    match = ('average_pitcher', [f'average_batter_{i}' for i in reversed(range(rules.num_batters))])
+    policy_solver = PolicySolver(bd, *match, rules=Rules)
+    policy_solver.initialize_distributions()
+
+    strategy = OneByOne()
+    k = 120
+    for _ in tqdm(range(k)):
+        strategy.step(policy_solver)
+        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/average_test.blosc2')
+
+
 def test_cardinals():
     """Test the cardinals lineup against an average pitcher"""
 
-    bd = BaseballData()
+    bd = BaseballData(load_pitches=False)
 
     average_pitcher = sum(p.data for p in bd.pitchers.values() if p.obp_percentile) / len(bd.pitchers)
     pitcher = Pitcher()
@@ -428,29 +477,12 @@ def test_cardinals():
     match = ('average_pitcher', cardinals)
     policy_solver = PolicySolver(bd, *match, rules=Rules)
     policy_solver.initialize_distributions()
-    del bd
 
-    # strategy = OneByOne()
-    # k = 120
-    # for _ in tqdm(range(k)):
-    #     strategy.step(policy_solver)
-    #     save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_ALT.blosc2')
-    strategy = load_blosc2(f'onebyone/cardinals_OPTIMAL_ALT.blosc2')
-    k = 82
+    strategy = OneByOne()
+    k = 120
     for _ in tqdm(range(k)):
         strategy.step(policy_solver)
-        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_ALT.blosc2')
-
-
-def graph_strategy(strategy: BattingOrderStrategy, label: str = ""):
-    import matplotlib.pyplot as plt
-
-    steps = [x[1] for x in strategy.get_steps()]
-    x = list(range(1, len(steps)))
-    y = [max(steps[0:i]) for i in x]
-    plt.plot(x, y)
-    plt.title(f'{label}: {strategy.__class__.__name__} - Best value {strategy.get_best()[1]}')
-    plt.show()
+        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL.blosc2')
 
 
 def generate_matches():
@@ -469,5 +501,5 @@ def generate_matches():
 
 
 if __name__ == '__main__':
-    seed(i=1)
-    test_cardinals()
+    seed()
+    test_batting_average()
