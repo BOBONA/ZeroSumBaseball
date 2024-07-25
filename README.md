@@ -1,6 +1,6 @@
 # Zero-Sum Baseball
 
-![A research poster of this repo's work](presentation/poster.png)
+![A research poster of this repo's work](presentation/poster-small.jpg)
 
 This project demonstrates how a zero-sum stochastic game model of baseball can be
 used to approach more complex baseball problems. We explore some strategies for optimizing 
