@@ -1,10 +1,12 @@
 import itertools
 import math
 import multiprocessing
+import os
 import random
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 from tqdm import tqdm
@@ -371,11 +373,15 @@ def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, label='s
         start = time.time()
         strategy.step(policy_solver)
         end = time.time()
+        print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
 
         if step % 10 == 9 and print_output:
             print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
 
     save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/{label}.blosc2')
+    save_blosc2(strategy.get_tries(), f'{strategy.__class__.__name__.lower()}/{label}_tries.blosc2')
+
+    return label, strategy.get_tries()
 
 
 def test_strategies():
@@ -405,35 +411,45 @@ def test_strategies():
         print('Winning strategy:', max(strategies, key=lambda x: load_blosc2(f'{x.__name__.lower()}/{i}.blosc2').get_best()[1]))
 
 
-def test_strategy_against_rosters(strategy: type[BattingOrderStrategy], matches: list[tuple], k: int):
-    """A routine to test a strategy against specific rosters"""
-
-    for team, match in matches:
-        test_strategy(strategy(), match, k, team)
-        print(f'{team} done')
-
-
 def test_against_rosters(load: bool = False):
     """A routine to test a strategies performance against specific rosters"""
 
-    # We just test each lineup against a pitcher from their own team :)
-    matches = {team: (pitchers[team], rosters[team]) for team in rosters.keys()}
+    matches = {team: ('average_pitcher', rosters[team]) for team in rosters.keys()}
     strategy = OneByOne  # Performed best in tests
 
     if not load:
         bd = BaseballData(load_pitches=False)
+        average_pitcher = get_average_pitcher(bd)
+        bd.pitchers['average_pitcher'] = average_pitcher
         for team, (pitcher, batters) in matches.items():
-            PolicySolver(bd, pitcher, batters, rules=rules).initialize_distributions(save_distributions=True, path=f'distributions/{team}/')
+            PolicySolver(bd, pitcher, batters, rules=Rules).initialize_distributions(save_distributions=True, path=f'distributions/{team}/')
 
-    games_per_process = 5
-    threads = []
-    for i in range(0, len(matches), games_per_process):
-        thread = multiprocessing.Process(target=test_strategy_against_rosters, args=(strategy, list(matches.items())[i:i + games_per_process], 60))
-        thread.start()
-        threads.append(thread)
+    num_cores = int(os.environ['LSB_DJOB_NUMPROC'])  # This is specific to the cluster I'm using
 
-    for thread in threads:
-        thread.join()
+    with ProcessPoolExecutor(max_workers=num_cores) as executor:
+        futures = [executor.submit(test_strategy, strategy=strategy(), match=matches[team], k=60, label=team) for team in matches.keys()]
+        for future in tqdm(as_completed(futures), total=len(futures)):
+            print(future.result())
+
+
+def get_average_pitcher(bd: BaseballData):
+    """Get the average pitcher from the data"""
+
+    qualifying_pitchers = [p for p in bd.pitchers.values() if p.obp_percentile]
+    average_pitcher = sum(p.data for p in qualifying_pitchers) / len(qualifying_pitchers)
+    pitcher = Pitcher()
+    pitcher.data = average_pitcher
+    return pitcher
+
+
+def get_average_batter(bd: BaseballData):
+    """Get the average batter from the data"""
+
+    qualifying_batters = [b for b in bd.batters.values() if b.obp_percentile]
+    average_batter = sum(b.data for b in qualifying_batters) / len(qualifying_batters)
+    batter = Batter()
+    batter.data = average_batter
+    return batter
 
 
 def test_batting_average():
@@ -441,15 +457,11 @@ def test_batting_average():
 
     bd = BaseballData(load_pitches=False)
 
-    average_pitcher = sum(p.data for p in bd.pitchers.values() if p.obp_percentile) / len(bd.pitchers)
-    pitcher = Pitcher()
-    pitcher.data = average_pitcher
-    bd.pitchers['average_pitcher'] = pitcher
+    average_pitcher = get_average_pitcher(bd)
+    bd.pitchers['average_pitcher'] = average_pitcher
 
-    average_batter = sum(b.data for b in bd.batters.values() if b.obp_percentile) / len(bd.batters)
     for i in range(rules.num_batters):
-        batter = Batter()
-        batter.data = average_batter.detach().clone()
+        batter = get_average_batter(bd)
         batter.data[:len(PitchType)] *= 0.8 + 0.4 * i / rules.num_batters
         bd.batters[f'average_batter_{i}'] = batter
 
@@ -461,7 +473,7 @@ def test_batting_average():
     k = 120
     for _ in tqdm(range(k)):
         strategy.step(policy_solver)
-        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/average_test.blosc2')
+        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/average_test_proper.blosc2')
 
 
 def test_cardinals():
@@ -469,10 +481,8 @@ def test_cardinals():
 
     bd = BaseballData(load_pitches=False)
 
-    average_pitcher = sum(p.data for p in bd.pitchers.values() if p.obp_percentile) / len(bd.pitchers)
-    pitcher = Pitcher()
-    pitcher.data = average_pitcher
-    bd.pitchers['average_pitcher'] = pitcher
+    average_pitcher = get_average_pitcher(bd)
+    bd.pitchers['average_pitcher'] = average_pitcher
     cardinals = rosters['cardinals']
     match = ('average_pitcher', cardinals)
     policy_solver = PolicySolver(bd, *match, rules=Rules)
@@ -482,7 +492,7 @@ def test_cardinals():
     k = 120
     for _ in tqdm(range(k)):
         strategy.step(policy_solver)
-        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL.blosc2')
+        save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_proper.blosc2')
 
 
 def generate_matches():
@@ -502,4 +512,4 @@ def generate_matches():
 
 if __name__ == '__main__':
     seed()
-    test_batting_average()
+    test_against_rosters()
