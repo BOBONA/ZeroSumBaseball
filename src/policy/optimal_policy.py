@@ -246,7 +246,7 @@ class PolicySolver:
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         swing_outcome_model = SwingOutcome().to(device)
-        swing_outcome_model.load_state_dict(torch.load('../../model_weights/swing_outcome.pth'))
+        swing_outcome_model.load_state_dict(torch.load('../../model_weights/swing_outcome.pth', map_location=device))
         swing_outcome_model.eval()
 
         swing_outcome = {}
@@ -301,7 +301,7 @@ class PolicySolver:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         pitcher_control_model = PitcherControl().to(device)
-        pitcher_control_model.load_state_dict(torch.load('../../model_weights/pitcher_control.pth'))
+        pitcher_control_model.load_state_dict(torch.load('../../model_weights/pitcher_control.pth', map_location=device))
         pitcher_control_model.eval()
 
         pitcher_type_control = defaultdict(defaultdict)
@@ -359,7 +359,7 @@ class PolicySolver:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         batter_patience_model = BatterSwings().to(device)
-        batter_patience_model.load_state_dict(torch.load('../../model_weights/batter_patience.pth'))
+        batter_patience_model.load_state_dict(torch.load('../../model_weights/batter_patience.pth', map_location=device))
         batter_patience_model.eval()
 
         # We only care about calculating the results for states that are unique to the model (which does not consider every variable)
@@ -424,14 +424,15 @@ class PolicySolver:
         for state_i, state in enumerate(self.game_states):
             transitions = self.permuted_transitions[state_i, :, 0]
             for idx, transition_i in enumerate(transitions):
-                transition = self.total_states[transition_i]
+                if transition_i > 0:
+                    transition = self.total_states[transition_i]
 
-                # If the transition goes to a new batter, we override it with the next batter in the permutation
-                if transition.batter != state.batter:
-                    transition = copy.copy(transition)
-                    current_batter_i = batter_lineup_permutation.index(state.batter)
-                    transition.batter = batter_lineup_permutation[(current_batter_i + 1) % self.rules.num_batters]
-                    transitions[idx] = self.total_states_dict[transition]
+                    # If the transition goes to a new batter, we override it with the next batter in the permutation
+                    if transition.batter != state.batter:
+                        transition = copy.copy(transition)
+                        current_batter_i = batter_lineup_permutation.index(state.batter)
+                        transition.batter = batter_lineup_permutation[(current_batter_i + 1) % self.rules.num_batters]
+                        transitions[idx] = self.total_states_dict[transition]
 
     def calculate_optimal_policy(self, print_output: bool = False, beta: float = 1e-3,
                                  use_last_values: bool = False) -> tuple[Policy, list[float]]:

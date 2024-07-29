@@ -1,12 +1,11 @@
 import itertools
 import math
 import multiprocessing
-import os
 import random
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 
 import numpy as np
 from tqdm import tqdm
@@ -16,7 +15,7 @@ from src.model.pitch_type import PitchType
 from src.model.players import Pitcher, Batter
 from src.model.state import DebugRules, GameState, Rules
 from src.policy.optimal_policy import PolicySolver, seed
-from src.policy.rosters import rosters, pitchers
+from src.policy.rosters import rosters
 
 type Permutation = tuple[int, ...]
 
@@ -373,7 +372,6 @@ def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, label='s
         start = time.time()
         strategy.step(policy_solver)
         end = time.time()
-        print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
 
         if step % 10 == 9 and print_output:
             print(f'{strategy.__class__.__name__}: {step + 1}/{k}, time: {end - start:.2f}s, best: {strategy.get_best()}')
@@ -411,6 +409,10 @@ def test_strategies():
         print('Winning strategy:', max(strategies, key=lambda x: load_blosc2(f'{x.__name__.lower()}/{i}.blosc2').get_best()[1]))
 
 
+def unpack_test_strategy(args):
+    return test_strategy(*args)
+
+
 def test_against_rosters(load: bool = False):
     """A routine to test a strategies performance against specific rosters"""
 
@@ -422,14 +424,13 @@ def test_against_rosters(load: bool = False):
         average_pitcher = get_average_pitcher(bd)
         bd.pitchers['average_pitcher'] = average_pitcher
         for team, (pitcher, batters) in matches.items():
-            PolicySolver(bd, pitcher, batters, rules=Rules).initialize_distributions(save_distributions=True, path=f'distributions/{team}/')
+            PolicySolver(bd, pitcher, batters, rules=DebugRules).initialize_distributions(save_distributions=True, path=f'distributions/{team}/')
 
-    num_cores = int(os.environ['LSB_DJOB_NUMPROC'])  # This is specific to the cluster I'm using
-
-    with ProcessPoolExecutor(max_workers=num_cores) as executor:
-        futures = [executor.submit(test_strategy, strategy=strategy(), match=matches[team], k=60, label=team) for team in matches.keys()]
-        for future in tqdm(as_completed(futures), total=len(futures)):
-            print(future.result())
+    # num_cores = int(os.environ['LSB_DJOB_NUMPROC'])  # This is specific to the cluster I'm using
+    num_cores = 1
+    with multiprocessing.Pool(num_cores) as pool:
+        for result in pool.imap_unordered(unpack_test_strategy, [(strategy(), match, 60, team) for team, match in matches.items()]):
+            print(result)
 
 
 def get_average_pitcher(bd: BaseballData):
@@ -512,4 +513,4 @@ def generate_matches():
 
 if __name__ == '__main__':
     seed()
-    test_against_rosters()
+    test_against_rosters(load=True)

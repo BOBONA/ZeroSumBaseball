@@ -12,3 +12,6 @@ aim for a borderline zone and can only aim for 5x5 centers.
 
 - Is there any way to approximate values for the full game using the simplified game rules? This would allow
   for more complex analysis. Perhaps viewing the states as vectors would help? Transforming from one representation to another...
+
+- I'm thinking a modified greedy hill climbing might work better. Instead of the swap operation, what if we do an
+  insert/move? Like when you move a card from one location to another
