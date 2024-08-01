@@ -18,7 +18,7 @@ except NameError:
     from tqdm import tqdm
 
 from src.data.code_mappings import pitch_type_mapping, pitch_result_mapping, at_bat_event_mapping
-from src.model.state import GameState, PitchResult
+from src.model.state import GameState, PitchResult, Rules
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
 from src.model.players import Batter, Pitcher, min_obp_cutoff
@@ -220,6 +220,20 @@ class BaseballData:
 
         print('Done')
 
+    def get_lineups(self, require_percentile=True, rules=Rules) -> list[tuple[int, tuple[int, ...]]]:
+        """Assuming pitches are loaded in order, returns the lineups for each game"""
+
+        lineups: dict[int, dict[int, Batter]] = defaultdict(dict)
+        for pitch in self.pitches:
+            lineup = lineups[pitch.game_id]
+            if pitch.batter_id not in lineup and len(lineup) < rules.num_batters:
+                lineup[pitch.batter_id] = self.batters[pitch.batter_id]
+
+        result = []
+        for game_id, lineup in lineups.items():
+            if len(lineup) == rules.num_batters and (not require_percentile or all(b.obp_percentile is not None for b in lineup.values())):
+                result.append((game_id, tuple(lineup.keys())))
+        return result
 
 if __name__ == '__main__':
     BaseballData.process_data()

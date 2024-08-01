@@ -1,11 +1,11 @@
 import itertools
 import math
 import multiprocessing
+import os
 import random
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from functools import partial
 
 import numpy as np
 from tqdm import tqdm
@@ -365,7 +365,7 @@ class GeneticAlgorithm(BattingOrderStrategy):
 def test_strategy(strategy: BattingOrderStrategy, match: tuple, k: int, label='strat', print_output=False):
     """Run a strategy for k steps and then save it"""
 
-    policy_solver = PolicySolver(None, *match, rules=rules)
+    policy_solver = PolicySolver(None, *match, rules=Rules)
     policy_solver.initialize_distributions(save_distributions=True, load_distributions=True, load_transition=True, path=f'distributions/{label}/')
 
     for step in range(k):
@@ -409,28 +409,32 @@ def test_strategies():
         print('Winning strategy:', max(strategies, key=lambda x: load_blosc2(f'{x.__name__.lower()}/{i}.blosc2').get_best()[1]))
 
 
-def unpack_test_strategy(args):
-    return test_strategy(*args)
-
-
-def test_against_rosters(load: bool = False):
+def test_against_rosters():
     """A routine to test a strategies performance against specific rosters"""
 
-    matches = {team: ('average_pitcher', rosters[team]) for team in rosters.keys()}
-    strategy = OneByOne  # Performed best in tests
+    print('Loading...')
 
-    if not load:
-        bd = BaseballData(load_pitches=False)
-        average_pitcher = get_average_pitcher(bd)
-        bd.pitchers['average_pitcher'] = average_pitcher
-        for team, (pitcher, batters) in matches.items():
-            PolicySolver(bd, pitcher, batters, rules=DebugRules).initialize_distributions(save_distributions=True, path=f'distributions/{team}/')
+    lineups = load_blosc2('lineups.blosc2')
 
-    # num_cores = int(os.environ['LSB_DJOB_NUMPROC'])  # This is specific to the cluster I'm using
-    num_cores = 1
-    with multiprocessing.Pool(num_cores) as pool:
-        for result in pool.imap_unordered(unpack_test_strategy, [(strategy(), match, 60, team) for team, match in matches.items()]):
-            print(result)
+    bd = BaseballData(load_pitches=False)
+    average_pitcher = get_average_pitcher(bd)
+    bd.pitchers['average_pitcher'] = average_pitcher
+
+    indexes = list(range(len(lineups)))
+    if os.environ.get('LSF_JOBINDEX'):
+        indexes = [int(os.environ.get('LSF_JOBINDEX')) - 1]
+
+    for i in indexes:
+        game_id, lineup = lineups[i]
+        match = ('average_pitcher', lineup)
+        policy_solver = PolicySolver(bd, *match, rules=Rules)
+        policy_solver.initialize_distributions(save_distributions=True, path=f'distributions/lineups/{game_id}/')
+
+        k = 60
+        strategy = OneByOne()
+        for _ in tqdm(range(k)):
+            strategy.step(policy_solver)
+            save_blosc2(strategy, f'lineups/{game_id}.blosc2')
 
 
 def get_average_pitcher(bd: BaseballData):
@@ -496,21 +500,16 @@ def test_cardinals():
         save_blosc2(strategy, f'{strategy.__class__.__name__.lower()}/cardinals_OPTIMAL_proper.blosc2')
 
 
-def generate_matches():
-    """It's nice to have a fixed set of matches instead of generating them every time"""
-
+def generate_lineups():
     bd = BaseballData()
-    num_matches = 1000
-    matches = []
+    num_lineups = 1000
 
-    for _ in range(num_matches):
-        pitcher = random.choice(sorted(bd.pitchers))
-        batters = random.sample(sorted(bd.batters), rules.num_batters)
-        matches.append((pitcher, batters))
+    lineups = bd.get_lineups()[-num_lineups:]
+    random.shuffle(lineups)
 
-    save_blosc2(matches, 'matches.blosc2')
+    save_blosc2(lineups, 'lineups.blosc2')
 
 
 if __name__ == '__main__':
     seed()
-    test_against_rosters(load=True)
+    test_against_rosters()
