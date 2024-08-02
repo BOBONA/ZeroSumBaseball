@@ -1,12 +1,16 @@
+import json
 import os.path
 import pickle
 from collections import defaultdict
+from datetime import datetime
 from typing import NamedTuple
 
 import blosc2
 import numpy as np
+import pandas
 import torch
 from pandas import DataFrame
+from pybaseball import player_search_list
 from torch import nan_to_num, Tensor
 from torch.distributions import MultivariateNormal
 
@@ -17,7 +21,8 @@ try:
 except NameError:
     from tqdm import tqdm
 
-from src.data.code_mappings import pitch_type_mapping, pitch_result_mapping, at_bat_event_mapping
+from src.data.code_mappings import pitch_type_mapping, pitch_result_mapping, at_bat_event_mapping, team_code_mapping, \
+    team_name_mapping
 from src.model.state import GameState, PitchResult, Rules
 from src.model.pitch import Pitch
 from src.model.pitch_type import PitchType
@@ -114,7 +119,8 @@ class BaseballData:
 
             for row in pitch_data.itertuples(index=False):
                 row: NamedTuple  # Consult https://baseballsavant.mlb.com/csv-docs for column names
-                state = GameState(inning=row.inning - 1, balls=row.balls, strikes=row.strikes, runs=row.bat_score,
+                state = GameState(inning=row.inning - 1, bottom=row.inning_topbot == 'Bot',
+                                  balls=row.balls, strikes=row.strikes, runs=row.bat_score,
                                   outs=row.outs_when_up, first=bool(row.on_1b),
                                   second=bool(row.on_2b), third=bool(row.on_3b))
 
@@ -135,7 +141,8 @@ class BaseballData:
                               pitch_type=pitch_type, location=zone_idx, pitch_result=pitch_outcome,
                               speed=row.release_speed, plate_x=plate_x, plate_z=plate_z,
                               game_id=row.game_pk, at_bat_num=row.at_bat_number,
-                              pitch_num=row.pitch_number)
+                              pitch_num=row.pitch_number, home_team=team_code_mapping.get(row.home_team, None),
+                              away_team=team_code_mapping.get(row.away_team, None))
 
                 # Update the pitch entry
                 pitches.append(pitch)
@@ -221,7 +228,12 @@ class BaseballData:
         print('Done')
 
     def get_lineups(self, require_percentile=True, rules=Rules) -> list[tuple[int, tuple[int, ...]]]:
-        """Assuming pitches are loaded in order, returns the lineups for each game"""
+        """
+        Assuming pitches are loaded in order, returns the lineups for each game.
+        TODO, this is currently inaccurate since it doesn't consider which team is batting.
+        What we ought to do is remove the game level info from Pitch and make a separate Game class.
+        Then, in our process method, we can obtain these lineups and store it in that class.
+        """
 
         lineups: dict[int, dict[int, Batter]] = defaultdict(dict)
         for pitch in self.pitches:
@@ -234,6 +246,58 @@ class BaseballData:
             if len(lineup) == rules.num_batters and (not require_percentile or all(b.obp_percentile is not None for b in lineup.values())):
                 result.append((game_id, tuple(lineup.keys())))
         return result
+
+    def parse_trades(self, raw_transactions_file: str = '../../raw_data/transactions.json'):
+        """
+        Assuming players are loaded in order, returns the single player trades which we have data for.
+        Currently, this only outputs 67 trades, since most trades are not for players with enough at-bats.
+        """
+
+        with open(raw_transactions_file, 'r', encoding='utf-8') as f:
+            transactions = json.load(f)
+
+        # Fetch the player names
+        player_names = []
+        for transaction in transactions:
+            for player in transaction['team1']['acquires'] + transaction.get('team2', {}).get('acquires', []):
+                name_parts = player.split()
+                if len(name_parts) >= 2:
+                    player_names.append((name_parts[1], name_parts[0]))
+
+        # This might use an older Pandas version (and you'll need to change append to _append)
+        search_results: pandas.DataFrame = player_search_list(player_names)
+
+        # Find valid single player trades
+        single_player_trades = []
+        for transaction in transactions:
+            if len(transaction['team1']['acquires']) == 1 and len(transaction.get('team2', {}).get('acquires', [])) == 1:
+                player1_parts = transaction['team1']['acquires'][0].split()
+                player2_parts = transaction['team2']['acquires'][0].split()
+
+                if len(player1_parts) < 2 or len(player2_parts) < 2:
+                    continue
+
+                first_name1, last_name1 = player1_parts[0:2]
+                first_name2, last_name2 = player2_parts[0:2]
+                player1_id = search_results[(search_results['name_first'] == first_name1.lower()) & (search_results['name_last'] == last_name1.lower())]['key_mlbam'].values
+                player2_id = search_results[(search_results['name_first'] == first_name2.lower()) & (search_results['name_last'] == last_name2.lower())]['key_mlbam'].values
+
+                if not len(player1_id) or not len(player2_id):
+                    continue
+
+                player1_id = player1_id[0]
+                player2_id = player2_id[0]
+
+                if (player1_id in self.batters and self.batters[player1_id].num_at_bats > 50 and
+                        player2_id in self.batters and self.batters[player2_id].num_at_bats > 50):
+                    team1 = team_code_mapping[team_name_mapping[transaction['team1']['name']]]
+                    team2 = team_code_mapping[team_name_mapping[transaction.get('team2', {}).get('name', '')]]
+                    date = datetime.strptime(transaction['date'], '%b %d, %Y').date()
+
+                    single_player_trades.append((date, team1, player2_id, team2, player1_id))
+
+        save_blosc2(single_player_trades, f'{self.default_processed_data_dir}trades.blosc2')
+
 
 if __name__ == '__main__':
     BaseballData.process_data()

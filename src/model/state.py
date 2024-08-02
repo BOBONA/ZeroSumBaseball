@@ -63,10 +63,11 @@ class DebugRules(Rules):
 class GameState:
     """Represents the changing state of a game."""
 
-    __slots__ = ['inning', 'balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'batter']
+    __slots__ = ['inning', 'bottom', 'balls', 'strikes', 'num_runs', 'num_outs', 'first', 'second', 'third', 'batter']
 
-    def __init__(self, inning=0, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, batter=0):
+    def __init__(self, inning=0, bottom=True, balls=0, strikes=0, runs=0, outs=0, first=False, second=False, third=False, batter=0):
         self.inning = inning
+        self.bottom = bottom
         self.balls = balls
         self.strikes = strikes
         self.num_runs = runs

@@ -1,5 +1,6 @@
 import torch
 
+from src.model.players import MLBTeam
 from src.model.state import GameState, PitchResult
 from src.model.pitch_type import PitchType
 from src.model.zones import Zone, Zones, default
@@ -12,12 +13,13 @@ class Pitch:
 
     # Saves memory by not storing __dict__ for each instance
     __slots__ = ['game_state', 'batter_id', 'pitcher_id', 'type', 'zone_idx', 'result', 'speed', 'plate_x', 'plate_z',
-                 'game_id', 'at_bat_num', 'pitch_num']
+                 'game_id', 'at_bat_num', 'pitch_num', 'home_team', 'away_team']
 
     def __init__(self, game_state: GameState, batter_id: int, pitcher_id: int,
                  pitch_type: PitchType | None, location: int | None, pitch_result: PitchResult | None = None,
                  speed: float | None = None, plate_x: float | None = None, plate_z: float | None = None,
-                 game_id: int = -1, at_bat_num: int = -1, pitch_num: int = -1):
+                 game_id: int = -1, at_bat_num: int = -1, pitch_num: int = -1,
+                 home_team: MLBTeam | None = None, away_team: MLBTeam | None = None):
         """
         :param game_state: The current state of the at-bat BEFORE the pitch is thrown
         :param batter_id: The ID of the batter
@@ -31,6 +33,8 @@ class Pitch:
         :param game_id: The ID of the game
         :param at_bat_num: The number of the at-bat
         :param pitch_num: The number of the pitch in the at-bat
+        :param home_team: The home team
+        :param away_team: The away team
         """
 
         self.game_state = game_state
@@ -45,6 +49,8 @@ class Pitch:
         self.game_id = game_id
         self.at_bat_num = at_bat_num
         self.pitch_num = pitch_num
+        self.home_team = home_team
+        self.away_team = away_team
 
     def is_valid(self):
         """Returns whether the pitch is valid and can be used for training."""

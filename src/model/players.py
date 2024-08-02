@@ -1,3 +1,4 @@
+import enum
 from collections import defaultdict
 
 import torch
@@ -114,3 +115,36 @@ class Pitcher:
         """Sets the average velocity data for the pitcher."""
 
         self.data[len(PitchType):, :, :] = data
+
+
+class MLBTeam(enum.IntEnum):
+    DIAMONDBACKS = 0
+    BRAVES = 1
+    ORIOLES = 2
+    RED_SOX = 3
+    WHITE_SOX = 4
+    CUBS = 5
+    REDS = 6
+    INDIANS = 7
+    ROCKIES = 8
+    TIGERS = 9
+    ASTROS = 10
+    ROYALS = 11
+    ANGELS = 12
+    DODGERS = 13
+    MARLINS = 14
+    BREWERS = 15
+    TWINS = 16
+    METS = 17
+    YANKEES = 18
+    ATHLETICS = 19
+    PHILLIES = 20
+    PIRATES = 21
+    PADRES = 22
+    GIANTS = 23
+    MARINERS = 24
+    CARDINALS = 25
+    RAYS = 26
+    RANGERS = 27
+    BLUE_JAYS = 28
+    NATIONALS = 29

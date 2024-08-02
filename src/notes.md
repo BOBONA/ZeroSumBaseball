@@ -5,6 +5,9 @@ by the runner and whether the batter gets out. This is a significant part of the
 - The pitcher's options are limited in a way that might not be representative of the actual game. The pitcher cannot
 aim for a borderline zone and can only aim for 5x5 centers.
 
+- Our player representations definitely do not include all relevant information, particularly when it comes
+  to lineup optimization. Another thing is we might want to weight more recent games more heavily.
+
 ## TODO / Ideas
 - Investigate the problem of player trade value, with respect to likely pitchers and lineups to be encountered in playoffs.
 

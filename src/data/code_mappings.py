@@ -2,7 +2,7 @@
 In this file, we define some mappings from codes in the datasets to our enum values.
 Note that these mappings are not perfect and someone with more knowledge ought to look at them.
 """
-
+from src.model.players import MLBTeam
 from src.model.state import PitchResult
 from src.model.pitch_type import PitchType
 
@@ -111,4 +111,73 @@ at_bat_event_mapping = {
     'pickoff_caught_stealing_3b': None,
     'pickoff_caught_stealing_home': None,
     'stolen_base_3b': None,
+}
+
+# This is a mapping from team names to team codes
+team_name_mapping = {
+    'Arizona Diamondbacks': 'ARI',
+    'Atlanta Braves': 'ATL',
+    'Baltimore Orioles': 'BAL',
+    'Boston Red Sox': 'BOS',
+    'Chicago White Sox': 'CWS',
+    'Chicago Cubs': 'CHC',
+    'Cincinnati Reds': 'CIN',
+    'Cleveland Indians': 'CLE',
+    'Cleveland Guardians': 'CLE',
+    'Colorado Rockies': 'COL',
+    'Detroit Tigers': 'DET',
+    'Houston Astros': 'HOU',
+    'Kansas City Royals': 'KC',
+    'Los Angeles Angels': 'ANA',
+    'Los Angeles Dodgers': 'LA',
+    'Miami Marlins': 'MIA',
+    'Milwaukee Brewers': 'MIL',
+    'Minnesota Twins': 'MIN',
+    'New York Mets': 'NYM',
+    'New York Yankees': 'NYY',
+    'Oakland Athletics': 'OAK',
+    'Philadelphia Phillies': 'PHI',
+    'Pittsburgh Pirates': 'PIT',
+    'San Diego Padres': 'SD',
+    'San Francisco Giants': 'SF',
+    'Seattle Mariners': 'SEA',
+    'St. Louis Cardinals': 'STL',
+    'Tampa Bay Rays': 'TB',
+    'Texas Rangers': 'TEX',
+    'Toronto Blue Jays': 'TOR',
+    'Washington Nationals': 'WAS'
+}
+
+# This is a mapping from team codes to our MLBTeam enum
+team_code_mapping = {
+    'ARI': MLBTeam.DIAMONDBACKS,
+    'ATL': MLBTeam.BRAVES,
+    'BAL': MLBTeam.ORIOLES,
+    'BOS': MLBTeam.RED_SOX,
+    'CWS': MLBTeam.WHITE_SOX,
+    'CHC': MLBTeam.CUBS,
+    'CIN': MLBTeam.REDS,
+    'CLE': MLBTeam.INDIANS,
+    'COL': MLBTeam.ROCKIES,
+    'DET': MLBTeam.TIGERS,
+    'HOU': MLBTeam.ASTROS,
+    'KC': MLBTeam.ROYALS,
+    'ANA': MLBTeam.ANGELS,
+    'LA': MLBTeam.DODGERS,
+    'MIA': MLBTeam.MARLINS,
+    'MIL': MLBTeam.BREWERS,
+    'MIN': MLBTeam.TWINS,
+    'NYM': MLBTeam.METS,
+    'NYY': MLBTeam.YANKEES,
+    'OAK': MLBTeam.ATHLETICS,
+    'PHI': MLBTeam.PHILLIES,
+    'PIT': MLBTeam.PIRATES,
+    'SD': MLBTeam.PADRES,
+    'SF': MLBTeam.GIANTS,
+    'SEA': MLBTeam.MARINERS,
+    'STL': MLBTeam.CARDINALS,
+    'TB': MLBTeam.RAYS,
+    'TEX': MLBTeam.RANGERS,
+    'TOR': MLBTeam.BLUE_JAYS,
+    'WAS': MLBTeam.NATIONALS
 }
